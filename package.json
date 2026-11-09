@@ -1,7 +1,7 @@
 {
   "name": "opencode-quota-router",
   "version": "0.1.0",
-  "description": "Quota-aware provider routing, fallback and recovery for OpenCode V2, with a local usage dashboard",
+  "description": "OpenCode plugin: automatic model fallback when you hit Claude, ChatGPT, Copilot or Grok usage limits, recovery when they reset, and a local usage and cost dashboard",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
@@ -13,7 +13,8 @@
     "dist",
     "README.md",
     "LICENSE",
-    "SECURITY.md"
+    "SECURITY.md",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=24"
@@ -33,6 +34,28 @@
     "vite": "^7.3.8",
     "vite-plugin-solid": "^2.11.15"
   },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "rate-limit",
+    "usage-limit",
+    "fallback",
+    "model-fallback",
+    "llm-routing",
+    "claude",
+    "claude-code",
+    "chatgpt",
+    "codex",
+    "github-copilot",
+    "grok",
+    "xai",
+    "anthropic",
+    "openai",
+    "ollama",
+    "quota",
+    "ai-coding",
+    "dashboard"
+  ],
   "license": "MIT",
   "author": "aicowboi",
   "repository": {
@@ -42,16 +65,5 @@
   "homepage": "https://github.com/aicowboi/opencode-quota-router#readme",
   "bugs": {
     "url": "https://github.com/aicowboi/opencode-quota-router/issues"
-  },
-  "keywords": [
-    "opencode",
-    "opencode-plugin",
-    "llm",
-    "routing",
-    "fallback",
-    "rate-limit",
-    "claude",
-    "copilot",
-    "grok"
-  ]
+  }
 }

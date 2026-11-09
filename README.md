@@ -1,16 +1,31 @@
-# quota-router
+# quota-router: automatic model fallback for OpenCode when you hit a usage limit
 
-**Keep coding when you hit a usage limit.** quota-router is an [OpenCode](https://opencode.ai) plugin. When a provider reaches its rate limit, subscription window or quota, it moves the session to the next provider you've chosen, without losing the request. When the limit resets, it moves you back up. It also gives you a local dashboard and a macOS menu bar view of your usage.
+[![CI](https://github.com/aicowboi/opencode-quota-router/actions/workflows/ci.yml/badge.svg)](https://github.com/aicowboi/opencode-quota-router/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-- **Uses subscriptions first.** Claude, ChatGPT, Copilot and Grok subscriptions are used before pay-per-use API keys, and local models (Ollama, LM Studio, vLLM) come last, at no cost.
+**Hit your Claude 5-hour limit, your ChatGPT weekly limit or your Copilot allowance in the middle of a task? quota-router keeps the session going on another provider, then moves it back when the limit resets.**
+
+It's an [OpenCode](https://opencode.ai) plugin that routes each request to the best provider you have capacity on. It knows how each plan's limits work, so it can see a limit coming instead of only reacting to errors. It also shows a local dashboard of usage, cost and fallbacks.
+
+![The quota-router dashboard: totals, and the route from the Claude subscription through Copilot, xAI and the pay-per-use APIs](docs/images/dashboard.png)
+
+<sub>Dashboard with demo data.</sub>
+
+## Why
+
+Coding agents burn through subscription limits quickly. Without help, a limit means one of three things: a failed turn, OpenCode retrying for up to 15 minutes, or you switching models by hand and remembering to switch back. If you pay for several plans (Claude, ChatGPT, Copilot, SuperGrok) and some API keys, the capacity is there; it just isn't used in a sensible order.
+
+quota-router uses it in this order:
+
+- **Subscriptions first.** Claude, ChatGPT, Copilot and Grok plans are used before pay-per-use API keys. Local models (Ollama, LM Studio, vLLM) come last, at no cost.
+- **Same request, new provider.** On a limit, the failed request is re-run on the equivalent model elsewhere, keeping its effort level, with no lost tool calls or extra messages.
+- **Back up when the limit resets.** It reads exact reset times from Claude, ChatGPT, Copilot, Anthropic and OpenAI, so it neither retries too early nor waits forever.
+- **Sees limits coming (optional).** It reads your Claude 5-hour and weekly windows, your ChatGPT windows and your Copilot credits, and moves off a plan before it runs out.
+- **No surprise charges (optional).** It leaves Claude before usage credits are drawn, and Copilot before paid credits beyond your allowance.
 - **Works with every provider OpenCode connects.** New connections are found automatically, and the dashboard suggests where each fits.
-- **Knows when limits reset.** It reads exact reset times from Claude, ChatGPT, Copilot, Anthropic and OpenAI, so it neither retries too early nor waits forever.
-- **No surprise charges (optional).** It can leave Claude before your usage credits are drawn, and Copilot before paid credits beyond your allowance.
 - **Local only.** No telemetry and no server of its own. Your data stays in a SQLite file on your machine. See [SECURITY.md](SECURITY.md).
 
 > Unofficial. Not affiliated with Anthropic, GitHub, xAI, OpenAI or OpenCode.
-
----
 
 ## Contents
 
@@ -21,6 +36,8 @@
 - [Dashboard and menu bar](#dashboard-and-menu-bar)
 - [Commands](#commands)
 - [Configuration reference](#configuration-reference)
+- [Errors it handles](#errors-it-handles)
+- [FAQ](#faq)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 
@@ -33,7 +50,7 @@
 ## Quick start
 
 ```bash
-git clone https://github.com/<you>/opencode-quota-router.git
+git clone https://github.com/aicowboi/opencode-quota-router.git
 cd opencode-quota-router
 npm install --ignore-scripts
 npm run build          # builds the menu bar part (dist/gui-experimental.cjs)
@@ -201,6 +218,46 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `retention.toolsDays` / `executionsDays` / `snapshotsDays` / `poolLogDays` | 400 / 400 / 90 / 730 | Days of raw detail kept; rollups and requests are kept for good |
 | `log.level` | `info` | `debug` logs every retry decision |
 
+## Errors it handles
+
+If you searched for one of these, this plugin is for you. Each is recognised, given a reset time where the provider reports one, and routed around.
+
+| Provider | Error or message | What quota-router does |
+|---|---|---|
+| Claude subscription (Pro, Max, Team) | `Claude AI usage limit reached`, `You've hit your session limit · resets 3:45pm`, `You've hit your weekly limit`, `Opus limit reached` | Moves to the next provider until the stated reset; a per-model weekly limit only blocks that model family |
+| Claude subscription | Usage credits being drawn after the window ends | Moves off before credits are used (with `claude.usageProbe`) |
+| ChatGPT plan (Plus, Pro, Business) | `usage_limit_reached`, "The usage limit has been reached" | Moves on until `resets_at`; with ChatGPT signed in, leaves at 98% of the 5-hour or weekly window |
+| GitHub Copilot | `quota_exceeded`, "You have exceeded your monthly quota", premium requests or AI credits used up | Moves on until the monthly reset; can stop before paid credits beyond the allowance |
+| xAI / SuperGrok | "You have used all available credits", spending limit reached | Moves on and retries after a cooldown |
+| Anthropic API | `rate_limit_error` (429), `overloaded_error` (529), "Your credit balance is too low", monthly spend cap ("You will regain access on …") | Short throttles retry in place; the rest move on, a spend cap until the 1st of the month |
+| OpenAI API | `insufficient_quota`, "You exceeded your current quota", `server_is_overloaded` | Moves on; a monthly limit until the 1st |
+| Any provider | HTTP 429, 402, 5xx, timeouts, OpenCode's `provider.rate-limit` and `provider.quota` errors | Classified as throttle, overload, window or billing, and handled the same way |
+
+Errors that a different model wouldn't fix (content filters, invalid requests, context too long, permission denials) are never routed.
+
+## FAQ
+
+**How do I keep working in OpenCode when Claude hits its 5-hour limit?**
+Install quota-router and connect at least one other provider: Copilot, ChatGPT, an API key or a local model. When Claude reports the limit, the same request runs on the next provider, and the session moves back to Claude after the reset time Claude gave.
+
+**Does it work with Claude Code, Codex or Cursor?**
+No. It's an OpenCode plugin and uses OpenCode's retry and routing hooks. It does use your Claude subscription through OpenCode's Claude provider, and your ChatGPT plan through "Sign in with ChatGPT".
+
+**Will it spend money without asking?**
+Only on providers you've connected with an API key, and only when every subscription ahead of them is limited. Set `"allow": "never"` on a provider to keep it out. The dashboard shows actual spend separately from the value of your subscription use.
+
+**Can I use a local model as the last resort?**
+Yes. Connect Ollama, LM Studio or vLLM in OpenCode, then add the suggested entry on the dashboard or set it in `chains`. Local models rank last and count as free.
+
+**Can I prefer GPT, Gemini or Grok instead of Claude?**
+Yes. Give that provider the lowest `priority`, and change any chain entry with `"chains": { "opus": { "<provider>": "<model>" } }`.
+
+**How is this different from opencode-rate-limit-fallback?**
+[opencode-rate-limit-fallback](https://github.com/azumag/opencode-rate-limit-fallback) is a well-established general fallback list with retry policies and a circuit breaker. quota-router is built around subscription plans. It reads plan usage and exact reset times to move before a limit and back after it, keeps effort levels across providers, avoids paid overage, and adds a usage and cost dashboard. Pick the one that matches how you pay for models.
+
+**Does it send my data anywhere?**
+No. Everything stays on your machine. The optional usage checks call the same endpoints Claude Code and Copilot use, with logins that are already on your machine; see [SECURITY.md](SECURITY.md).
+
 ## Troubleshooting
 
 - **The dashboard doesn't open.** Check `router.log` for `dashboard` lines. If port 47321 is taken, the next free port up to 47325 is used, and `/router` opens the right one.
@@ -222,6 +279,10 @@ npm run build      # menu bar bundle
 - **Dashboard:** `src/dashboard/page.html`, read on every request.
 - **Server code:** changes rebuild the plugin's core when saved, with no restart.
 - **`package.json` exports:** changes need an OpenCode restart.
+
+## How it's built
+
+See [docs/how-it-works.md](docs/how-it-works.md) for the design: the error classifier, per-pool health shared across sessions, the router, the usage checks and the storage that keeps years of history small.
 
 ## License
 
