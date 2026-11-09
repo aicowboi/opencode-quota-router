@@ -91,6 +91,12 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.005em }
 .linkish { color: var(--muted); font-size: 12px; text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 3px }
 .linkish:hover { color: var(--text) }
 .usage { text-align: right; font-size: 13px }
+.tag { display: inline-block; font-size: 11px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; margin-left: 6px; line-height: 16px }
+.sugg { display: grid; grid-template-columns: 90px minmax(0, 1.4fr) minmax(0, 2fr) auto; gap: 14px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 13px; align-items: baseline }
+.sugg:first-child { border-top: 0 }
+.btn-sm { font-size: 12px; padding: 2px 9px; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--soft) }
+.btn-sm:hover { color: var(--text); border-color: var(--soft) }
+.btn-sm + .btn-sm, .btn-sm + .linkish { margin-left: 8px }
 .usage .muted { font-size: 12px }
 
 /* Ledger strip */
@@ -196,6 +202,7 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
   <section aria-labelledby="h-route">
     <div class="sec-head"><h2 id="h-route">Route</h2><span class="caption">Each request goes to the highest provider with capacity, and comes back up when a limit resets.</span></div>
     <div class="ladder" id="ladder"></div>
+    <div id="suggest"></div>
   </section>
 
   <div class="cols">
@@ -271,11 +278,24 @@ const PROVIDERS = {
   "github-copilot": { name: "GitHub Copilot", short: "Copilot", c: "--copilot" },
   anthropic: { name: "Anthropic API", short: "Anthropic API", c: "--anthropic" },
   openai: { name: "OpenAI API", short: "OpenAI API", c: "--openai" },
+  ollama: { name: "Ollama (local)", short: "Ollama" },
+  "ollama-cloud": { name: "Ollama Cloud", short: "Ollama Cloud" },
+  lmstudio: { name: "LM Studio (local)", short: "LM Studio" },
+  vllm: { name: "vLLM (local)", short: "vLLM" },
+  openrouter: { name: "OpenRouter", short: "OpenRouter" },
+  google: { name: "Google Gemini", short: "Gemini" },
+  "google-vertex": { name: "Google Vertex AI", short: "Vertex" },
+  "amazon-bedrock": { name: "AWS Bedrock", short: "Bedrock" },
+  azure: { name: "Azure AI", short: "Azure" },
+  "azure-deepseek": { name: "Azure DeepSeek", short: "Azure DeepSeek" },
+  opencode: { name: "OpenCode Zen", short: "Zen" },
 }
+const chatgpt = () => state && state.chatgpt && state.chatgpt.active
 const css = getComputedStyle(document.documentElement)
 const color = (p) => css.getPropertyValue((PROVIDERS[p] || {}).c || "--other").trim() || "#888"
-const pname = (p) => (PROVIDERS[p] || {}).name || p
-const pshort = (p) => (PROVIDERS[p] || {}).short || p
+const pname = (p) => p === "openai" && chatgpt() ? "ChatGPT subscription" : (PROVIDERS[p] || {}).name || p
+const pshort = (p) => p === "openai" && chatgpt() ? "ChatGPT" : (PROVIDERS[p] || {}).short || p
+const PKIND = { subscription: "Subscription", metered: "Pay-per-use", local: "Local · free" }
 const providerOf = (model) => String(model || "").split("/")[0]
 
 async function api(path) { const r = await fetch(path, { cache: "no-store" }); if (!r.ok) throw new Error(path + " " + r.status); return r.json() }
@@ -363,7 +383,10 @@ function renderLadder() {
   const s = state, cl = s.claude, cp = s.copilot
   const serving = {}
   for (const l of s.live) { const p = providerOf(l.model); if (p) serving[p] = (serving[p] || 0) + 1 }
-  $("ladder").innerHTML = s.providers.map((p) => {
+  const inChain = new Set(Object.values(s.chains).flat().map(providerOf))
+  // Providers that are neither connected nor configured by default are noise.
+  const shown = s.providers.filter((p) => p.connected || !p.discovered)
+  $("ladder").innerHTML = shown.map((p, i) => {
     const col = color(p.id), lim = limitedPool(p), main = p.pools.find((x) => x.id === p.id)
     let cap = ""
     if (p.id === "claude-agent") {
@@ -382,9 +405,15 @@ function renderLadder() {
       } else cap = '<div class="note">' + esc(cp.message || (cp.enabled ? "Waiting for the first usage check" : "Usage checks are off")) + "</div>"
     } else if (p.id === "xai") {
       cap = '<div class="gauge"><span class="lab">Week</span><span class="track unknown"></span><span class="val muted">not reported</span></div><div class="note">xAI publishes no usage figures; limits are learned from errors.</div>'
+    } else if (p.id === "openai" && chatgpt()) {
+      const w = s.chatgpt.data ? s.chatgpt.data.windows : []
+      for (const x of w) cap += gauge(x.label === "weekly" ? "Week" : x.label, x.usedPct, Math.round(x.usedPct) + "%" + (x.resetAt ? " · " + esc(x.resetAt - Date.now() < 864e5 ? fmtTime(x.resetAt) : fmtWhen(x.resetAt)) : ""), col, s.chatgpt.cutoverAtPct)
+      if (!w.length) cap = '<div class="note">Signed in with ChatGPT. Window figures appear after its first response.</div>'
     } else if (main && main.utilization != null) {
       cap = gauge("Rate limit", main.utilization, Math.round(main.utilization) + "%", col)
-    } else cap = '<div class="note">' + (p.kind === "metered" ? "Pay-per-use; used only when every subscription is limited." : "") + "</div>"
+    } else if (p.connected && !inChain.has(p.id)) {
+      cap = '<div class="note">In no chain yet, so never routed to.' + (s.suggestions.some((x) => x.providerID === p.id) ? " See the suggestions below." : "") + "</div>"
+    } else cap = '<div class="note">' + (p.kind === "metered" ? "Pay-per-use; used only when every subscription is limited." : p.kind === "local" ? "Runs on this machine at no cost; the last resort." : "") + "</div>"
 
     let st
     if (!p.connected) st = '<span class="muted">Not connected</span>'
@@ -398,11 +427,26 @@ function renderLadder() {
 
     const t = provTotals[p.id]
     const use = t ? fmtN(t.tokens) + ' tokens<div class="muted">' + fmtUSD(p.kind === "metered" ? t.actual : t.equiv) + (p.kind === "metered" ? " spent" : " at API prices") + "</div>" : '<span class="muted">No use ' + esc(RANGE_TEXT[range]) + "</span>"
-    return '<div class="rung' + (serving[p.id] ? " serving" : "") + (p.connected ? "" : " off") + '" style="--c:' + col + '"><span class="rank">' + p.priority + "</span>" +
-      '<div><div class="pname"><span class="dot" style="background:' + col + '"></span>' + esc(pname(p.id)) + '</div><div class="pkind">' + (p.kind === "metered" ? "Pay-per-use" : "Subscription") + "</div></div>" +
+    return '<div class="rung' + (serving[p.id] ? " serving" : "") + (p.connected ? "" : " off") + '" style="--c:' + col + '"><span class="rank">' + (i + 1) + "</span>" +
+      '<div><div class="pname"><span class="dot" style="background:' + col + '"></span>' + esc(pname(p.id)) + '</div><div class="pkind">' + esc(PKIND[p.kind] || p.kind) + (p.discovered ? '<span class="tag" title="Connected in OpenCode and ranked by kind; set providers.' + esc(p.id) + '.priority to place it yourself">found</span>' : "") + "</div></div>" +
       "<div>" + cap + '</div><div class="state">' + st + '</div><div class="usage">' + use + "</div></div>"
   }).join("")
   for (const b of $("ladder").querySelectorAll("[data-reset]")) b.onclick = () => act({ action: "reset-pool", pool: b.dataset.reset })
+  renderSuggest()
+}
+
+// ---------- chain suggestions (collapsed by default) ----------
+function renderSuggest() {
+  const s = state, added = Object.entries(s.added || {}).flatMap(([chain, refs]) => refs.map((ref) => ({ chain, ref })))
+  if (!s.suggestions.length && !added.length) { $("suggest").innerHTML = ""; return }
+  const key = "suggest", isOpen = open.has(key)
+  const rows = s.suggestions.map((x) => '<div class="sugg"><span class="soft">' + esc(x.chain) + '</span><span><span class="model">' + esc(x.ref) + '</span><div class="muted" style="font-size:12px">' + esc(pname(x.providerID)) + " · " + esc(PKIND[x.kind] || x.kind) + '</div></span><span class="why">' + esc(x.reason) + '</span><span><button class="btn-sm" data-chain="' + esc(x.chain) + '" data-ref="' + esc(x.ref) + '" data-do="chain-add">Add</button><button class="linkish" data-chain="' + esc(x.chain) + '" data-ref="' + esc(x.ref) + '" data-do="chain-ignore">Ignore</button></span></div>').join("") +
+    added.map((x) => '<div class="sugg"><span class="soft">' + esc(x.chain) + '</span><span class="model">' + esc(x.ref) + '</span><span class="why">Added from a suggestion; ranked by its provider</span><span><button class="linkish" data-chain="' + esc(x.chain) + '" data-ref="' + esc(x.ref) + '" data-do="chain-remove">Remove</button></span></div>').join("")
+  const counts = (s.suggestions.length ? "<span><b>" + s.suggestions.length + "</b> " + plural(s.suggestions.length, "suggestion") + "</span>" : "") + (added.length ? "<span><b>" + added.length + "</b> added</span>" : "")
+  $("suggest").innerHTML = '<div class="disc"' + (isOpen ? " open" : "") + '><button class="sum" aria-expanded="' + isOpen + '"><span class="chev">›</span><span style="flex:1">Chain entries for your other providers</span><span class="counts">' + counts + '</span></button><div class="body"><div class="note" style="margin:0 0 8px">A chain lists equivalent models across providers. Adding one lets routing fall back to it, in route order. Stored by the plugin, not in your config.</div>' + rows + "</div></div>"
+  const d = $("suggest").querySelector(".disc")
+  d.querySelector(".sum").onclick = () => { const now = !d.hasAttribute("open"); d.toggleAttribute("open", now); now ? open.add(key) : open.delete(key); saveOpen() }
+  for (const b of $("suggest").querySelectorAll("[data-do]")) b.onclick = () => act({ action: b.dataset.do, chain: b.dataset.chain, ref: b.dataset.ref })
 }
 
 // ---------- totals ----------

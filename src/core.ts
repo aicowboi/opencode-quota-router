@@ -9,6 +9,8 @@ import { estimate } from "./pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
 import { fetchCopilotUser, findGithubToken, interpretCopilot, type CopilotQuota } from "./probes/copilot.ts"
 import { markDirty, optimize, prune, refreshSessions, rollupDirty } from "./maintenance.ts"
+import { applyDiscovery, suggest, withAdditions, type ConnectionMethod } from "./discovery.ts"
+import type { CodexWindow } from "./headers.ts"
 import { Recorder } from "./recorder.ts"
 import { nextMonthUtc } from "./resets.ts"
 import { findInChains, type Preferred } from "./router.ts"
@@ -55,6 +57,13 @@ export class Core {
   lastActivity = Date.now()
   claude: ProbeStatus<ClaudeUsage> & { lastExtraUsed?: number } = { ok: false }
   copilot: ProbeStatus<CopilotQuota> = { ok: false }
+  /** ChatGPT plan windows, read from response headers while OpenAI is signed in with ChatGPT. */
+  chatgpt: ProbeStatus<{ windows: CodexWindow[] }> = { ok: false }
+  /** How each connected provider is signed in. */
+  connections = new Map<string, ConnectionMethod | undefined>()
+  /** Called when the ChatGPT sign-in becomes active, to start reading its headers. */
+  onChatgpt = new Set<() => Promise<void> | void>()
+  private options: unknown
   dashboardURL?: string
   private listeners = new Set<(kinds: string[]) => void>()
   private pendingKinds = new Set<string>()
@@ -67,6 +76,7 @@ export class Core {
 
   private constructor(store: Store, log: Logger, options: unknown) {
     const { config, warnings } = loadConfig(options)
+    this.options = options
     this.config = config
     this.warnings = warnings
     this.log = log
@@ -100,14 +110,96 @@ export class Core {
   }
 
   setOptions(options: unknown) {
-    const { config, warnings } = loadConfig(options)
-    this.config = config
+    this.options = options
+    this.rebuildConfig()
+    this.log.setLevel(this.config.log.level)
+    for (const w of this.warnings) this.log.warn("config", { warning: w })
+  }
+
+  /** Options, then what the connections say, then the chain entries accepted on the dashboard. */
+  rebuildConfig() {
+    const { config, warnings } = loadConfig(this.options)
+    const connected = new Map<string, ConnectionMethod | undefined>()
+    for (const m of this.models.values()) if (!connected.has(m.providerID)) connected.set(m.providerID, this.connections.get(m.providerID))
+    this.config = withAdditions(applyDiscovery(config, connected), this.chainAdditions())
     this.warnings = warnings
-    this.pools.setConfig(config)
-    this.log.setLevel(config.log.level)
-    for (const w of warnings) this.log.warn("config", { warning: w })
-    // Chains may have changed: re-resolve each session's preference.
+    this.pools.setConfig(this.config)
+    // Chains and ranks may have changed: re-resolve each session's preference.
     for (const s of this.sessions.values()) if (s.preferred) s.preferred = this.preferredFor(s.preferred.model)
+    this.notify("config")
+  }
+
+  // ---------- connections and chain suggestions ----------
+
+  /** Read how each connected provider is signed in, and re-rank. */
+  async refreshConnections() {
+    if (!this.ctx) return
+    const providers = [...new Set([...this.models.values()].map((m) => m.providerID))]
+    const next = new Map<string, ConnectionMethod | undefined>()
+    await Promise.all(
+      providers.map(async (id) => {
+        try {
+          const c = await this.ctx.integration.connection.active(id)
+          next.set(id, c?.type === "env" ? "env" : c?.method)
+        } catch {
+          next.set(id, undefined)
+        }
+      }),
+    )
+    const wasChatgpt = this.chatgptActive()
+    for (const [id, method] of next) {
+      const before = this.connections.get(id)
+      if (this.connections.has(id) && before !== method) {
+        this.log.info("connection changed", { provider: id, from: before, to: method })
+        this.resetProvider(id, "sign-in changed")
+      }
+    }
+    this.connections = next
+    this.rebuildConfig()
+    if (!wasChatgpt && this.chatgptActive()) for (const f of this.onChatgpt) await f()
+  }
+
+  /** OpenAI signed in with ChatGPT rather than an API key. */
+  chatgptActive() {
+    return this.connections.get("openai") === "oauth"
+  }
+
+  /** A different login or plan: what was learned about the old one no longer applies. */
+  resetProvider(providerID: string, reason: string) {
+    for (const p of this.pools.all()) if (p.id === providerID || p.id.startsWith(`${providerID}:`)) this.pools.reset(p.id, reason)
+    if (providerID === "openai") this.chatgpt = { ok: false }
+  }
+
+  private metaJSON<T>(key: string, fallback: T): T {
+    try {
+      return JSON.parse(this.store.meta(key) ?? "") as T
+    } catch {
+      return fallback
+    }
+  }
+
+  chainAdditions(): Record<string, string[]> {
+    return this.metaJSON<Record<string, string[]>>("chain_additions", {})
+  }
+
+  ignoredSuggestions(): string[] {
+    return this.metaJSON<string[]>("chain_ignored", [])
+  }
+
+  suggestions() {
+    return suggest(this.config, this.models, new Set(this.ignoredSuggestions()))
+  }
+
+  /** Accept, ignore or undo a suggested chain entry. Stored in the plugin's database, never in the user's config. */
+  changeChain(action: "add" | "ignore" | "remove", chain: string, ref: string) {
+    const additions = this.chainAdditions()
+    const key = ref.replace(/#.*$/, "")
+    if (action === "add") additions[chain] = [...(additions[chain] ?? []).filter((r) => r.replace(/#.*$/, "") !== key), ref]
+    else if (action === "remove") additions[chain] = (additions[chain] ?? []).filter((r) => r.replace(/#.*$/, "") !== key)
+    else this.store.setMeta("chain_ignored", JSON.stringify([...new Set([...this.ignoredSuggestions(), `${chain} ${key}`])]))
+    if (action !== "ignore") this.store.setMeta("chain_additions", JSON.stringify(additions))
+    this.log.info("chain", { action, chain, ref })
+    this.rebuildConfig()
   }
 
   // ---------- change notification (dashboard live updates) ----------
@@ -145,11 +237,18 @@ export class Core {
           variants: (m.variants ?? []).map((v: any) => (typeof v === "string" ? v : v?.id)).filter(Boolean),
           context: m.limit?.context,
           cost: Array.isArray(m.cost) ? m.cost : undefined,
+          family: typeof m.family === "string" ? m.family : undefined,
+          released: typeof m.time?.released === "number" ? m.time.released : undefined,
+          tools: typeof m.capabilities?.tools === "boolean" ? m.capabilities.tools : undefined,
+          status: typeof m.status === "string" ? m.status : undefined,
         })
       }
       if (next.size > 0) {
+        const providers = (m: Map<string, ModelInfo>) => [...new Set([...m.values()].map((x) => x.providerID))].sort().join(",")
+        const changed = providers(next) !== providers(this.models)
         this.models = next
         this.modelsAt = Date.now()
+        if (changed || force) await this.refreshConnections()
       }
     } catch (error) {
       this.log.warn("model list failed", { error: String(error) })
@@ -367,6 +466,23 @@ export class Core {
       this.probing.copilot = false
       this.notify("usage")
     }
+  }
+
+  /** ChatGPT plan windows from a response: leave before the tightest one is spent. */
+  applyChatgpt(windows: CodexWindow[], now: number) {
+    if (!windows.length) return
+    const cfg = this.config.chatgpt
+    const tightest = [...windows].sort((a, b) => b.usedPct - a.usedPct)[0]
+    this.pools.usage("openai", {
+      utilization: tightest.usedPct,
+      resetAt: tightest.resetAt,
+      exhausted: tightest.usedPct >= cfg.cutoverAtPct,
+      warn: tightest.usedPct >= cfg.warnAtPct,
+      evidence: `ChatGPT ${tightest.label} window at ${Math.round(tightest.usedPct)}%`,
+    })
+    this.snapshot("openai", { windows }, now)
+    this.chatgpt = { at: now, ok: true, data: { windows } }
+    this.notify("usage")
   }
 
   applyCopilot(q: CopilotQuota, now: number) {

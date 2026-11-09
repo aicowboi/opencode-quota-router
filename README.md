@@ -2,8 +2,9 @@
 
 **Keep coding when you hit a usage limit.** quota-router is an [OpenCode](https://opencode.ai) plugin. When a provider reaches its rate limit, subscription window or quota, it moves the session to the next provider you've chosen, without losing the request. When the limit resets, it moves you back up. It also gives you a local dashboard and a macOS menu bar view of your usage.
 
-- **Uses subscriptions first.** Claude, Copilot and Grok subscriptions are used before pay-per-use API keys.
-- **Knows when limits reset.** It reads exact reset times from Claude, Copilot, Anthropic and OpenAI, so it neither retries too early nor waits forever.
+- **Uses subscriptions first.** Claude, ChatGPT, Copilot and Grok subscriptions are used before pay-per-use API keys, and local models (Ollama, LM Studio, vLLM) come last, at no cost.
+- **Works with every provider OpenCode connects.** New connections are found automatically, and the dashboard suggests where each fits.
+- **Knows when limits reset.** It reads exact reset times from Claude, ChatGPT, Copilot, Anthropic and OpenAI, so it neither retries too early nor waits forever.
 - **No surprise charges (optional).** It can leave Claude before your usage credits are drawn, and Copilot before paid credits beyond your allowance.
 - **Local only.** No telemetry and no server of its own. Your data stays in a SQLite file on your machine. See [SECURITY.md](SECURITY.md).
 
@@ -55,17 +56,27 @@ OpenCode loads it straight away; there's nothing to restart. Run `/router` in an
 
 ### 1. Connect your providers
 
-quota-router only routes between providers that OpenCode can already use. In OpenCode, run `/connect` for each provider you have. The defaults know these five:
+quota-router only routes between providers that OpenCode can already use. In OpenCode, run `/connect` for each provider you have. Its default chains cover these five:
 
 | Priority | Provider ID | What it is |
 |---|---|---|
 | 1 | `claude-agent` | Claude Pro, Max, Team or Enterprise, via the Claude Code login |
-| 2 | `xai` | SuperGrok or X subscription (OAuth) |
+| 2 | `xai` | SuperGrok or X subscription (signed in), or an xAI API key (pay-per-use) |
 | 3 | `github-copilot` | GitHub Copilot |
 | 4 | `anthropic` | Anthropic API key (pay-per-use) |
-| 5 | `openai` | OpenAI API key (pay-per-use) |
+| 5 | `openai` | OpenAI API key (pay-per-use), or a ChatGPT plan when you sign in with ChatGPT |
 
 Providers you haven't connected are skipped, so you don't need all five.
+
+**Every other provider** OpenCode connects (Ollama, LM Studio, OpenRouter, Gemini, Bedrock, Vertex, Azure, Fireworks, Groq and the rest) is found automatically and given a kind from how you connected it:
+
+- **Subscription:** signed in with a plan (for example ChatGPT or Ollama Cloud).
+- **Pay-per-use:** an API key.
+- **Local:** Ollama, LM Studio, vLLM and similar. These are free, so they cost nothing on the dashboard.
+
+Found providers rank after the ones you configured: subscriptions first, then pay-per-use, then local. They're only routed to once they're in a chain (step 3). Set `"discovery": { "enabled": false }` to rank only the providers you list.
+
+**ChatGPT plans.** If you sign in to OpenAI with ChatGPT (Plus, Pro, Business), it's treated as a subscription and ranked with the others. Its 5-hour and weekly windows appear on the dashboard after its first response, and routing leaves it at 98% so you never hit the wall mid-task. If a limit is hit anyway, the exact reset time from ChatGPT is used. An OpenAI API key is unaffected.
 
 ### 2. Choose your order
 
@@ -92,7 +103,19 @@ A **chain** lists the equivalent models across providers. Selecting any model in
 
 - **New sessions:** to route these by default, set your default model to a chain member, for example `"model": "claude-agent/opus"`.
 - **Models outside every chain** are never touched.
-- **Custom chains:** model names change often, so override them with `"chains": { "opus": ["provider/model#variant", ...] }`.
+- **Other providers:** the dashboard's Route section lists suggested entries for every connected provider that's in no chain yet: the same model family where there is one, otherwise the model nearest the chain's price level. **Add** puts it in the chain; **Ignore** hides it. Your choices are stored by the plugin, not in your config.
+
+**Choosing your own models.** Change one provider's entry and keep the rest of the chain:
+
+```jsonc
+"chains": {
+  "opus": { "xai": "grok-4.6#high", "openai": null, "ollama": "qwen3-coder" }
+}
+```
+
+A model name sets that provider's entry, `null` removes it, and a provider not yet in the chain is added. To replace a chain completely, or to make your own, give a list: `"chains": { "gpt": ["openai/gpt-6.1-sol#high", "azure/gpt-6.1-sol#high"] }`. `"opus": null` removes a chain.
+
+To make a model other than Opus your first choice, give its provider the lowest priority: routing always tries providers in priority order within the chain.
 
 Effort carries across providers as an offset: Opus at `high`, one step above its `medium` baseline, becomes Grok at `xhigh`. A model is skipped if the conversation wouldn't fit its context window.
 
@@ -161,7 +184,10 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 |---|---|---|
 | `providers.<id>.priority` | 1–5 as above | Lower is tried first. Chains are sorted by it. |
 | `providers.<id>.allow` | `always` | `never` keeps a provider out of routing |
-| `chains.<name>` | see above | Ordered equivalents, `provider/model#variant`; `null` removes a chain |
+| `chains.<name>` | see above | A list of `provider/model#variant` replaces the chain; an object of `provider: model` (or `null`) changes single entries; `null` removes the chain |
+| `providers.<id>.kind` | detected | `subscription`, `metered` or `local`; set it to override what discovery detects |
+| `discovery.enabled` | true | Rank and show every connected provider, not only the ones listed here |
+| `chatgpt.cutoverAtPct` / `warnAtPct` | 98 / 85 | Leave a ChatGPT plan before its 5-hour or weekly window is spent |
 | `throttle.maxWaitMs` / `inPlaceRetries` | 20000 / 2 | Short throttles retried on the same provider |
 | `onExhausted.mode` / `maxWaitMs` | `wait` / 30 min | When everything is limited: wait for the earliest reset, or `fail` |
 | `claude.usageProbe` | false | Check Claude subscription usage (see step 4) |
@@ -179,6 +205,7 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 
 - **The dashboard doesn't open.** Check `router.log` for `dashboard` lines. If port 47321 is taken, the next free port up to 47325 is used, and `/router` opens the right one.
 - **A session isn't routed.** Its model isn't in any chain. Pick a chain model, or add yours to `chains`.
+- **A connected provider is never used.** It's in no chain yet. Add one of its suggested entries on the dashboard, or set it in `chains`.
 - **"Usage check" messages on the dashboard.** The Claude check needs Claude Code to be logged in (`claude auth login`). An expired login refreshes the next time Claude Code runs.
 - **The menu bar item doesn't appear.** It needs OpenCode Desktop and a built `dist/gui-experimental.cjs` (`npm run build`). After first adding it, restart OpenCode once.
 - **Routing misbehaves.** Run `/router pause`, or use the dashboard's pause button, and open an issue with the relevant `router.log` lines. Remove anything private from them first.

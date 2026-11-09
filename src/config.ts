@@ -7,10 +7,20 @@ export type ProviderConfig = {
   allow: "always" | "never"
   /** Cooldown when a window error carries no reset time. */
   windowCooldownMs: number
+  /** Set by discovery: ranked by kind rather than by configuration. */
+  discovered?: boolean
+  /** The user set `kind`, so the connection method does not override it. */
+  kindFromUser?: boolean
 }
 
 export type Config = {
   enabled: boolean
+  /** Providers the user configured explicitly; discovery never re-ranks these. */
+  explicitProviders: string[]
+  /** Rank and include every connected provider, not only configured ones. */
+  discovery: { enabled: boolean }
+  /** ChatGPT subscription (OpenAI signed in with ChatGPT): leave before a window is spent. */
+  chatgpt: { cutoverAtPct: number; warnAtPct: number }
   providers: Record<string, ProviderConfig>
   /** Ordered equivalents, best first. Entries are `provider/model#variant`. */
   chains: Record<string, ModelRef[]>
@@ -88,12 +98,15 @@ export const DEFAULT_CHAINS: Record<string, string[]> = {
 
 export const DEFAULTS: Config = {
   enabled: true,
+  explicitProviders: [],
+  discovery: { enabled: true },
+  chatgpt: { cutoverAtPct: 98, warnAtPct: 85 },
   providers: {
     "claude-agent": { priority: 1, kind: "subscription", allow: "always", windowCooldownMs: 15 * 60_000 },
     xai: { priority: 2, kind: "subscription", allow: "always", windowCooldownMs: 6 * HOUR },
     "github-copilot": { priority: 3, kind: "subscription", allow: "always", windowCooldownMs: 30 * 60_000 },
     anthropic: { priority: 4, kind: "metered", allow: "always", windowCooldownMs: 15 * 60_000 },
-    openai: { priority: 5, kind: "metered", allow: "always", windowCooldownMs: 15 * 60_000 },
+    openai: { priority: 5, kind: "metered", allow: "always", windowCooldownMs: 30 * 60_000 },
   },
   chains: Object.fromEntries(Object.entries(DEFAULT_CHAINS).map(([k, v]) => [k, v.map(parseRef)])),
   recovery: { skewMs: 60_000 },
@@ -151,13 +164,16 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
   const rawProviders = opts.providers
   delete opts.chains
   delete opts.providers
+  delete opts.explicitProviders
   const config = merge(DEFAULTS, opts, "", warnings)
 
   config.providers = { ...DEFAULTS.providers }
+  config.explicitProviders = isObject(rawProviders) ? Object.keys(rawProviders) : []
   if (isObject(rawProviders)) {
     for (const [id, value] of Object.entries(rawProviders)) {
-      const base = DEFAULTS.providers[id] ?? { priority: 99, kind: "metered", allow: "always", windowCooldownMs: 15 * 60_000 }
+      const base: ProviderConfig = DEFAULTS.providers[id] ?? { priority: 99, kind: "metered", allow: "always", windowCooldownMs: 15 * 60_000 }
       config.providers[id] = merge(base, value, `providers.${id}.`, warnings)
+      if (isObject(value) && "kind" in value) config.providers[id].kindFromUser = true
     }
   }
 
@@ -168,8 +184,29 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
         delete config.chains[name]
         continue
       }
+      // `{ "<provider>": "<model#variant>" | null }` changes or removes one provider's entry and keeps the rest.
+      if (isObject(entries)) {
+        const chain = [...(config.chains[name] ?? [])]
+        for (const [providerID, value] of Object.entries(entries)) {
+          const at = chain.findIndex((r) => r.providerID === providerID)
+          if (value === null || value === false) {
+            if (at !== -1) chain.splice(at, 1)
+            continue
+          }
+          try {
+            const ref = parseRef(String(value).includes("/") ? String(value) : `${providerID}/${value}`)
+            if (ref.providerID !== providerID) throw new Error(`"${value}" is not a ${providerID} model`)
+            if (at === -1) chain.push(ref)
+            else chain[at] = ref
+          } catch (error) {
+            warnings.push(`chains.${name}.${providerID}: ${(error as Error).message}`)
+          }
+        }
+        config.chains[name] = chain
+        continue
+      }
       if (!Array.isArray(entries)) {
-        warnings.push(`chains.${name} should be an array; ignored`)
+        warnings.push(`chains.${name} should be a list, or an object of provider: model; ignored`)
         continue
       }
       const refs: ModelRef[] = []

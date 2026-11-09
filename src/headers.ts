@@ -43,3 +43,37 @@ export function headroom(headers: Headers, now: number): Headroom | undefined {
   }
   return tightest
 }
+
+export type CodexWindow = { label: string; usedPct: number; windowMinutes?: number; resetAt?: number }
+
+const windowLabel = (minutes: number | undefined, fallback: string) =>
+  minutes === 300
+    ? "5-hour"
+    : minutes === 10_080
+      ? "weekly"
+      : !minutes
+        ? fallback
+        : minutes % 1440 === 0
+          ? `${minutes / 1440}-day`
+          : minutes % 60 === 0
+            ? `${minutes / 60}-hour`
+            : `${minutes}-minute`
+
+/**
+ * ChatGPT plans (OpenAI signed in with ChatGPT) report their windows on every response:
+ * `x-codex-{primary,secondary}-{used-percent,window-minutes,reset-at,reset-after-seconds}`.
+ * Primary is usually the 5-hour window and secondary the weekly one.
+ */
+export function codexWindows(headers: Headers, now: number): CodexWindow[] {
+  const out: CodexWindow[] = []
+  for (const which of ["primary", "secondary"]) {
+    const raw = headers.get(`x-codex-${which}-used-percent`)
+    const usedPct = Number(raw)
+    if (raw === null || raw.trim() === "" || !Number.isFinite(usedPct)) continue
+    const minutes = Number(headers.get(`x-codex-${which}-window-minutes`)) || undefined
+    const after = Number(headers.get(`x-codex-${which}-reset-after-seconds`) ?? NaN)
+    const resetAt = parseTimestamp(headers.get(`x-codex-${which}-reset-at`) ?? undefined, now) ?? (Number.isFinite(after) ? now + after * 1000 : undefined)
+    out.push({ label: windowLabel(minutes, which), usedPct: Math.max(0, Math.min(100, usedPct)), windowMinutes: minutes, resetAt })
+  }
+  return out
+}

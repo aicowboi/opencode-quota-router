@@ -101,7 +101,31 @@ function copilot(error: SessionError, text: string, codes: string, pools: string
   return undefined
 }
 
+/** A numeric field anywhere in the JSON error body, e.g. ChatGPT's `resets_at`. */
+const bodyNumber = (error: SessionError, key: string): number | undefined => {
+  let found: number | undefined
+  try {
+    const visit = (o: unknown) => {
+      if (!o || typeof o !== "object" || found !== undefined) return
+      for (const [k, v] of Object.entries(o)) {
+        if (k === key && (typeof v === "number" || (typeof v === "string" && /^\d+$/.test(v)))) found = Number(v)
+        else if (typeof v === "object") visit(v)
+      }
+    }
+    visit(JSON.parse(error.response?.body ?? ""))
+  } catch {}
+  return found
+}
+
 function openai(error: SessionError, text: string, codes: string, pools: string[], now: number): Signal | undefined {
+  // ChatGPT plan (signed in with ChatGPT): a 5-hour or weekly window, with its exact reset in the body.
+  if (codes.includes("usage_limit_reached") || error.type === "provider.chatgpt-limit") {
+    const after = bodyNumber(error, "resets_in_seconds")
+    const resetAt = parseTimestamp(bodyNumber(error, "resets_at"), now) ?? (after !== undefined ? now + after * 1000 : parseResetText(text, now))
+    const plan = /"plan_type"\s*:\s*"([a-z_]+)"/i.exec(error.response?.body ?? "")?.[1]
+    return signal("window", pools, `ChatGPT${plan ? ` ${plan}` : ""} usage limit`, { resetAt })
+  }
+  if (codes.includes("usage_not_included")) return signal("billing", pools, "ChatGPT plan does not include this model")
   if (/insufficient_quota|credit_balance_exhausted|organization_usage_limit_exceeded|spend_limit_exceeded/.test(codes) || /exceeded your current quota/i.test(text)) {
     const monthly = /usage_limit|spend_limit/.test(codes)
     return signal("billing", pools, "OpenAI quota or spend limit", monthly ? { resetAt: nextMonthUtc(now) } : {})

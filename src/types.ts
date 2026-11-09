@@ -48,7 +48,8 @@ export type PoolState = {
   updated: number
 }
 
-export type ProviderKind = "subscription" | "metered"
+/** subscription: flat-rate plan; metered: pay per token; local: runs on this machine, free. */
+export type ProviderKind = "subscription" | "metered" | "local"
 
 export type ModelInfo = {
   providerID: string
@@ -57,6 +58,10 @@ export type ModelInfo = {
   variants: string[]
   context?: number
   cost?: CostTier[]
+  family?: string
+  released?: number
+  tools?: boolean
+  status?: string
 }
 
 export type CostTier = {

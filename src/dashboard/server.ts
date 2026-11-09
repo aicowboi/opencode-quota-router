@@ -41,6 +41,7 @@ export function buildMenubar(core: Core) {
     paused: core.paused,
     url: core.dashboardURL,
     claude: core.claude.data ? { windows: core.claude.data.windows, extra: core.claude.data.extra, at: core.claude.at } : undefined,
+    chatgpt: core.chatgptActive() && core.chatgpt.data ? { windows: core.chatgpt.data.windows, at: core.chatgpt.at } : undefined,
     copilot: core.copilot.data ? { ...core.copilot.data, at: core.copilot.at } : undefined,
     providers,
     live: live.map((e) => {
@@ -93,6 +94,9 @@ export function buildState(core: Core) {
     providers,
     claude: { ok: core.claude.ok, at: core.claude.at, message: core.claude.message, data: core.claude.data, enabled: core.config.claude.usageProbe, cutoverAtPct: core.config.claude.cutoverAtPct },
     copilot: { ok: core.copilot.ok, at: core.copilot.at, message: core.copilot.message, data: core.copilot.data, enabled: core.config.copilot.usageProbe, reserveFraction: core.config.copilot.reserveFraction },
+    chatgpt: { active: core.chatgptActive(), at: core.chatgpt.at, data: core.chatgpt.data, cutoverAtPct: core.config.chatgpt.cutoverAtPct },
+    suggestions: core.suggestions(),
+    added: core.chainAdditions(),
     live,
     chains: Object.fromEntries(Object.keys(core.config.chains).map((name) => [name, orderedChain(core.config, name).map(refLabel)])),
     warnings: core.warnings,
@@ -216,6 +220,8 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           else if (a.action === "pause") core.paused = true
           else if (a.action === "resume") core.paused = false
           else if (a.action === "probe") await Promise.allSettled([core.probeClaude(true), core.probeCopilot(true)])
+          else if (["chain-add", "chain-ignore", "chain-remove"].includes(a.action) && typeof a.chain === "string" && typeof a.ref === "string" && core.config.chains[a.chain] && /^[^/\s]+\/[^\s]+$/.test(a.ref))
+            core.changeChain(a.action.slice(6) as "add" | "ignore" | "remove", a.chain, a.ref)
           else return json(res, { error: "Unknown action" }, 400)
           core.log.info("dashboard action", { action: a.action, pool: a.pool })
           core.notify("pools")

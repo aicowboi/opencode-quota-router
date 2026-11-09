@@ -1,10 +1,10 @@
 // quota-router: quota-aware provider routing for OpenCode V2, with a local usage dashboard.
 import { backfill } from "./backfill.ts"
 import { refLabel } from "./config.ts"
-import { onEvent, onHttpResponse, onPrompt, onRetry } from "./controller.ts"
+import { onCodexResponse, onEvent, onHttpResponse, onPrompt, onRetry } from "./controller.ts"
 import { Core, VERSION } from "./core.ts"
 import { startDashboard } from "./dashboard/server.ts"
-import { headroom } from "./headers.ts"
+import { codexWindows, headroom } from "./headers.ts"
 import { orderedChain } from "./router.ts"
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -132,6 +132,17 @@ export default {
     for (const providerID of core.config.headers.observe) {
       await ctx.session.hook("http.response", guard(core, "http.response", (e: any) => onHttpResponse(core, e, headroom)), { providerID })
     }
+    // ChatGPT reports its windows in headers. Only hook OpenAI while it is signed in with ChatGPT, which already uses
+    // HTTP: hooking an API-key connection would turn off its WebSocket transport.
+    let codexHooked = false
+    const hookCodex = async () => {
+      if (codexHooked || !core.chatgptActive()) return
+      codexHooked = true
+      await ctx.session.hook("http.response", guard(core, "http.response", (e: any) => onCodexResponse(core, e, codexWindows)), { providerID: "openai" })
+      core.log.info("chatgpt", { message: "Reading ChatGPT plan windows from responses" })
+    }
+    core.onChatgpt.add(hookCodex)
+    await hookCodex()
 
     await ctx.command.transform((editor: any) => {
       editor.add({
@@ -211,6 +222,7 @@ export default {
 
     return () => {
       controller.abort()
+      core.onChatgpt.delete(hookCodex)
       core.instances.delete(ctx)
       if (core.ctx === ctx) core.ctx = [...core.instances][0] ?? ctx
       if (core.instances.size === 0) g.shutdownTimer = setTimeout(() => void shutdown(g, true), 5_000)

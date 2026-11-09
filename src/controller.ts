@@ -3,6 +3,7 @@ import { classify } from "./classify.ts"
 import { refKey, refLabel } from "./config.ts"
 import type { Core, SessionState } from "./core.ts"
 import { orderedChain, route } from "./router.ts"
+import type { CodexWindow } from "./headers.ts"
 import type { ModelRef, SessionError } from "./types.ts"
 
 const same = (a?: ModelRef, b?: ModelRef, variant = true) =>
@@ -147,8 +148,11 @@ export async function onEvent(core: Core, ev: { id: string; type: string; create
     }
     case "session.execution.failed":
       return resumeAfterFailure(core, ev)
-    case "credential.updated":
     case "credential.switched":
+      // Another account or plan on the same provider: its limits are not the old one's.
+      if (typeof d.integrationID === "string") core.resetProvider(d.integrationID, "credential switched")
+    // falls through
+    case "credential.updated":
     case "integration.updated":
       for (const p of core.pools.all()) if (p.kind === "auth") core.pools.reset(p.id, "credential updated")
       await core.refreshModels(true)
@@ -217,6 +221,13 @@ async function continueOn(core: Core, s: SessionState, target: ModelRef, eventID
   } catch (error) {
     core.log.error("resume failed", { sessionID: s.id, error: String(error) })
   }
+}
+
+/** ChatGPT plan windows from `x-codex-*` headers, on any response that carries them. */
+export function onCodexResponse(core: Core, e: { model: ModelRef; response: Response }, read: (h: Headers, now: number) => CodexWindow[]) {
+  if (e.model.providerID !== "openai" || !core.chatgptActive()) return
+  const now = Date.now()
+  core.applyChatgpt(read(e.response.headers, now), now)
 }
 
 /** Headroom from rate-limit headers on successful responses, for providers listed in `headers.observe`. */
