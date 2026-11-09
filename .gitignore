@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local data the plugin creates; never commit it
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.log
+*.csv
+
+# Secrets and local overrides
+.env
+.env.*
+*.local.*
+*.pem
+*.key
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# OpenCode project config and local plugins
+.opencode/
+opencode.json
+opencode.jsonc

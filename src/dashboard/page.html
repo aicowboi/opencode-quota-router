@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Quota Router</title>
+<style>
+/* Palette: warm graphite with muted, earthy provider colours. Colour carries meaning (provider, state), never decoration. */
+:root {
+  --bg: #121210; --surface: #181816; --raised: #1f1e1b; --line: #2a2925; --line-strong: #3a3833;
+  --text: #ebe8e1; --soft: #b9b5ab; --muted: #8a867c; --faint: #5f5c55;
+  --ok: #7fae8b; --warn: #d6a24a; --bad: #d0644f; --info: #8fa6c9;
+  --claude: #d2785a; --xai: #b6b0a3; --copilot: #9787e0; --anthropic: #c7a56b; --openai: #74ab8e; --other: #7d8899;
+  --focus: #e8c27a;
+  --serif: "New York", "Iowan Old Style", Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f4ef; --surface: #fbfaf7; --raised: #efece5; --line: #e2ded5; --line-strong: #cfcac0;
+    --text: #1d1c19; --soft: #4a4740; --muted: #7a766c; --faint: #a6a196;
+    --ok: #3f8a57; --warn: #b07a14; --bad: #b4432f; --info: #4a6a9c;
+    --claude: #c25e3d; --xai: #6f6a5f; --copilot: #6d5bd0; --anthropic: #a8823c; --openai: #3f8a66; --other: #66707f;
+    --focus: #b07a14;
+  }
+}
+* { box-sizing: border-box }
+html { background: var(--bg) }
+body { margin: 0; color: var(--text); font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums }
+button, input, select { font: inherit; color: inherit }
+button { background: none; border: 0; padding: 0; cursor: pointer }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px }
+a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 3px }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 32px }
+.muted { color: var(--muted) } .soft { color: var(--soft) } .mono { font-family: var(--mono); font-size: 12.5px }
+.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: 1px; margin-right: 7px; flex: none }
+
+/* Masthead */
+.mast { padding: 28px 0 22px; border-bottom: 1px solid var(--line) }
+.mast-row { display: flex; align-items: center; gap: 14px }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -.01em }
+.brand svg { display: block }
+.spacer { flex: 1 }
+.headline { font-family: var(--serif); font-size: 26px; line-height: 1.3; letter-spacing: -.01em; margin: 22px 0 6px; max-width: 900px; font-weight: 400 }
+.headline b { font-weight: 600 }
+.subline { color: var(--muted); font-size: 13px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap }
+.live { display: inline-flex; align-items: center; gap: 6px }
+.live i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint) }
+.live.on i { background: var(--ok) }
+.seg { display: inline-flex; background: var(--raised); border-radius: 8px; padding: 2px }
+.seg button { padding: 4px 11px; border-radius: 6px; color: var(--muted); font-size: 13px }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line) }
+.iconbtn { width: 32px; height: 30px; border-radius: 8px; color: var(--soft); display: inline-grid; place-items: center }
+.iconbtn:hover, .menu button:hover { background: var(--raised) }
+.menu { position: absolute; right: 0; top: 36px; min-width: 230px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,.28); z-index: 20 }
+.menu button, .menu a { display: block; width: 100%; text-align: left; padding: 7px 10px; border-radius: 6px; text-decoration: none; font-size: 13px }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 6px 4px }
+.menu .label { font-size: 11px; color: var(--muted); padding: 6px 10px 2px }
+
+/* Sections */
+section { padding: 30px 0 8px }
+.sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px }
+h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.005em }
+.caption { color: var(--muted); font-size: 13px }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px }
+@media (max-width: 980px) { .cols { grid-template-columns: 1fr; gap: 0 } .wrap { padding: 0 18px } }
+
+/* Route ladder */
+.ladder { border-top: 1px solid var(--line) }
+.rung { display: grid; grid-template-columns: 28px minmax(170px, 1.1fr) minmax(220px, 2fr) minmax(170px, 1.1fr) minmax(140px, .9fr); gap: 20px; align-items: start; padding: 14px 0 14px 12px; border-bottom: 1px solid var(--line); position: relative }
+.rung::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 2px; background: transparent }
+.rung.serving::before { background: var(--c) }
+.rung.off { opacity: .5 }
+.rank { color: var(--faint); font-size: 13px; padding-top: 1px }
+.pname { font-weight: 600 } .pkind { color: var(--muted); font-size: 12px }
+.gauge { display: grid; grid-template-columns: 76px 1fr auto; gap: 4px 10px; align-items: center; font-size: 12.5px }
+.gauge + .gauge { margin-top: 7px }
+.gauge .lab { color: var(--muted) }
+.track { height: 5px; background: var(--raised); border-radius: 3px; overflow: hidden; position: relative }
+.track i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--c) }
+.track .cut { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--faint) }
+.track.unknown { background: repeating-linear-gradient(90deg, var(--raised) 0 6px, transparent 6px 10px) }
+.gauge .val { color: var(--soft); white-space: nowrap }
+.note { font-size: 12.5px; color: var(--muted); margin-top: 6px }
+.state { font-size: 13px }
+.state .why { color: var(--muted); font-size: 12.5px; display: block; margin-top: 2px }
+.st-ok { color: var(--ok) } .st-warn { color: var(--warn) } .st-bad { color: var(--bad) } .st-info { color: var(--info) }
+.linkish { color: var(--muted); font-size: 12px; text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 3px }
+.linkish:hover { color: var(--text) }
+.usage { text-align: right; font-size: 13px }
+.usage .muted { font-size: 12px }
+
+/* Ledger strip */
+.ledger { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line) }
+.fig { padding: 16px 18px 16px 0 }
+.fig + .fig { border-left: 1px solid var(--line); padding-left: 18px }
+.fig .k { color: var(--muted); font-size: 12.5px }
+.fig .v { font-size: 28px; font-weight: 300; letter-spacing: -.02em; margin: 4px 0 2px; line-height: 1.15 }
+.fig .s { color: var(--muted); font-size: 12px; line-height: 1.4 }
+@media (max-width: 1100px) { .ledger { grid-template-columns: repeat(3, minmax(0, 1fr)) } .fig:nth-child(4) { border-left: 0; padding-left: 0 } .fig:nth-child(n+4) { border-top: 1px solid var(--line) } }
+
+/* Lists */
+.list { border-top: 1px solid var(--line) }
+.row { display: flex; gap: 12px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line) }
+.row .main { flex: 1; min-width: 0 }
+.ttl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.meta { color: var(--muted); font-size: 12.5px; margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px 12px }
+.model { font-family: var(--mono); font-size: 12px; color: var(--soft) }
+.grouphead { display: flex; align-items: baseline; gap: 10px; padding: 14px 0 6px; font-size: 12.5px; color: var(--muted) }
+.grouphead b { color: var(--soft); font-weight: 600 }
+.child { padding-left: 20px; border-left: 1px solid var(--line); margin-left: 4px }
+.elapsed { font-weight: 500 }
+.empty { color: var(--muted); padding: 18px 0; font-size: 13px }
+
+/* Disclosure groups */
+.disc { border-bottom: 1px solid var(--line) }
+.disc > button.sum { display: flex; width: 100%; gap: 12px; align-items: baseline; padding: 11px 0; text-align: left }
+.disc > button.sum:hover .chev { color: var(--text) }
+.chev { color: var(--faint); width: 12px; display: inline-block; transition: transform .12s; flex: none }
+.disc[open] > button.sum .chev { transform: rotate(90deg) }
+.disc .body { display: none; padding: 0 0 10px 24px }
+.disc[open] .body { display: block }
+.counts { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted) }
+.counts span b { font-weight: 600; color: var(--soft) }
+.chg { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; align-items: baseline }
+.chg:first-child { border-top: 0 }
+.kind { font-size: 12px; font-weight: 600 }
+.why { color: var(--muted); font-size: 12.5px }
+.events { margin: 6px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--muted) }
+.events li { padding: 2px 0 }
+.more { color: var(--muted); font-size: 12.5px; padding: 8px 0 }
+.more:hover { color: var(--text) }
+
+/* Filters and tabs */
+.tabs { display: flex; gap: 16px; font-size: 13px; flex-wrap: wrap }
+.tabs button { color: var(--muted); padding: 2px 0; border-bottom: 1.5px solid transparent }
+.tabs button[aria-pressed="true"] { color: var(--text); border-color: var(--text) }
+.tabs .n { color: var(--faint); margin-left: 4px }
+.toolbar { display: flex; gap: 16px; align-items: center; margin-bottom: 10px; flex-wrap: wrap }
+.search { flex: 1; min-width: 220px; background: transparent; border: 0; border-bottom: 1px solid var(--line-strong); padding: 6px 0; outline: none }
+.search:focus { border-color: var(--focus) }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: 13px }
+th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line-strong) }
+td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--line); vertical-align: baseline }
+th.num, td.num { padding-right: 0; padding-left: 14px }
+tr.sub td:first-child { padding-left: 22px }
+tr.grp { cursor: pointer } tr.grp td { font-weight: 600 } tr.grp:hover td { background: color-mix(in srgb, var(--raised) 60%, transparent) }
+tr.other td { color: var(--muted) }
+.mix { display: flex; height: 5px; width: 90px; border-radius: 3px; overflow: hidden; background: var(--raised); margin-left: auto }
+.mix i { display: block; height: 100% }
+
+/* Charts */
+.chart { position: relative }
+.chart svg { display: block; width: 100%; overflow: visible }
+.chart text { fill: var(--muted); font-size: 11px; font-family: var(--sans) }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--soft); margin-top: 8px }
+.tip { position: fixed; pointer-events: none; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,.25); z-index: 30; min-width: 170px; display: none }
+.tip .r { display: flex; justify-content: space-between; gap: 16px }
+
+footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height: 1.7 }
+.banner { margin-top: 14px; font-size: 13px; color: var(--warn) }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+</head>
+<body>
+<header class="mast">
+  <div class="wrap">
+    <div class="mast-row">
+      <div class="brand"><span id="mark"></span><span>Quota Router</span></div>
+      <span class="spacer"></span>
+      <div class="seg" id="range" role="group" aria-label="Range"></div>
+      <div style="position:relative">
+        <button class="iconbtn" id="menuBtn" aria-haspopup="true" aria-expanded="false" aria-label="More actions">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg>
+        </button>
+        <div class="menu" id="menu" hidden></div>
+      </div>
+    </div>
+    <h1 class="headline" id="headline">Loading…</h1>
+    <div class="subline"><span class="live" id="live"><i></i><span>Connecting</span></span><span id="checked"></span></div>
+    <div class="banner" id="banner" hidden></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section aria-labelledby="h-numbers">
+    <div class="sec-head"><h2 id="h-numbers">Totals</h2><span class="caption" id="rangeCaption"></span></div>
+    <div class="ledger" id="ledger"></div>
+  </section>
+
+  <section aria-labelledby="h-route">
+    <div class="sec-head"><h2 id="h-route">Route</h2><span class="caption">Each request goes to the highest provider with capacity, and comes back up when a limit resets.</span></div>
+    <div class="ladder" id="ladder"></div>
+  </section>
+
+  <div class="cols">
+    <section aria-labelledby="h-now">
+      <div class="sec-head"><h2 id="h-now">Running now</h2><span class="caption" id="nowCount"></span></div>
+      <div id="now"></div>
+    </section>
+    <section aria-labelledby="h-routing">
+      <div class="sec-head"><h2 id="h-routing">Routing</h2></div>
+      <div class="toolbar"><div class="tabs" id="rfilters"></div></div>
+      <div id="routing" class="list"></div>
+    </section>
+  </div>
+
+  <section aria-labelledby="h-usage">
+    <div class="sec-head"><h2 id="h-usage">Usage</h2><span class="caption" id="bucketCaption"></span><span class="spacer"></span><div class="tabs" id="metric"></div></div>
+    <div class="chart" id="chart"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section aria-labelledby="h-allow">
+    <div class="sec-head"><h2 id="h-allow">Allowances over time</h2><span class="caption">Share of each subscription window or monthly allowance used</span></div>
+    <div class="chart" id="allow"></div>
+  </section>
+
+  <section aria-labelledby="h-break">
+    <div class="sec-head"><h2 id="h-break">Breakdown</h2><span class="spacer"></span><div class="tabs" id="bytabs"></div></div>
+    <div id="breakdown"></div>
+  </section>
+
+  <section aria-labelledby="h-sessions">
+    <div class="sec-head"><h2 id="h-sessions">Sessions</h2><span class="caption">Totals cover each session's whole life</span></div>
+    <div class="toolbar">
+      <input class="search" id="sq" type="search" placeholder="Search by title, project, model or session ID" aria-label="Search sessions">
+      <div class="tabs" id="sgroup"></div>
+    </div>
+    <div id="sessions"></div>
+  </section>
+</main>
+
+<footer><div class="wrap" id="footer"></div></footer>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict"
+// ---------- formatting ----------
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
+const n = (x) => Number(x) || 0
+const fmtN = (x) => { x = n(x); const a = Math.abs(x); return a >= 1e9 ? (x / 1e9).toFixed(2) + "B" : a >= 1e6 ? (x / 1e6).toFixed(1) + "M" : a >= 1e4 ? (x / 1e3).toFixed(0) + "K" : a >= 1e3 ? (x / 1e3).toFixed(1) + "K" : String(Math.round(x)) }
+const fmtInt = (x) => Math.round(n(x)).toLocaleString()
+const fmtUSD = (x) => { x = n(x); return x >= 1000 ? "$" + Math.round(x).toLocaleString() : x >= 100 ? "$" + x.toFixed(0) : x >= 1 ? "$" + x.toFixed(2) : x > 0 ? "$" + x.toFixed(3) : "$0" }
+const fmtDur = (ms) => { ms = Math.max(0, n(ms)); const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), r = s % 60
+  return d ? d + "d " + h + "h" : h ? h + "h " + String(m).padStart(2, "0") + "m" : m ? m + "m " + String(r).padStart(2, "0") + "s" : r + "s" }
+const fmtTime = (t) => t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""
+const sameDay = (a, b) => a.toDateString() === b.toDateString()
+const fmtWhen = (t) => { if (!t) return ""; const d = new Date(t), now = new Date(); const tm = fmtTime(t)
+  if (sameDay(d, now)) return tm
+  const y = new Date(now); y.setDate(now.getDate() - 1); if (sameDay(d, y)) return "yesterday " + tm
+  if (Math.abs(d - now) < 6 * 864e5) return d.toLocaleDateString([], { weekday: "short" }) + " " + tm
+  return d.toLocaleDateString([], { day: "numeric", month: "short", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" }) + (d.getHours() || d.getMinutes() ? " " + tm : "") }
+const until = (t) => t ? (t > Date.now() ? "in " + fmtDur(t - Date.now()) : "now") : ""
+const ago = (t) => t ? fmtDur(Date.now() - t) + " ago" : "never"
+const base = (p) => String(p || "").split("/").filter(Boolean).pop() || p || "—"
+const dayLabel = (d) => { const t = new Date(d + "T00:00:00"), now = new Date(); const y = new Date(now); y.setDate(now.getDate() - 1)
+  return sameDay(t, now) ? "Today" : sameDay(t, y) ? "Yesterday" : t.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", year: t.getFullYear() === now.getFullYear() ? undefined : "numeric" }) }
+const money = (v, cur) => { try { return new Intl.NumberFormat([], { style: "currency", currency: cur || "USD" }).format(n(v)) } catch { return n(v).toFixed(2) + " " + (cur || "") } }
+const plural = (k, one, many) => k === 1 ? one : (many ?? one + "s")
+
+const PROVIDERS = {
+  "claude-agent": { name: "Claude subscription", short: "Claude", c: "--claude" },
+  xai: { name: "xAI SuperGrok", short: "xAI", c: "--xai" },
+  "github-copilot": { name: "GitHub Copilot", short: "Copilot", c: "--copilot" },
+  anthropic: { name: "Anthropic API", short: "Anthropic API", c: "--anthropic" },
+  openai: { name: "OpenAI API", short: "OpenAI API", c: "--openai" },
+}
+const css = getComputedStyle(document.documentElement)
+const color = (p) => css.getPropertyValue((PROVIDERS[p] || {}).c || "--other").trim() || "#888"
+const pname = (p) => (PROVIDERS[p] || {}).name || p
+const pshort = (p) => (PROVIDERS[p] || {}).short || p
+const providerOf = (model) => String(model || "").split("/")[0]
+
+async function api(path) { const r = await fetch(path, { cache: "no-store" }); if (!r.ok) throw new Error(path + " " + r.status); return r.json() }
+async function act(body) { await fetch("/api/action", { method: "POST", headers: { "content-type": "application/json", "x-quota-router": "1" }, body: JSON.stringify(body) }); refreshState() }
+
+// ---------- state ----------
+const RANGES = [["today", "Today"], ["7d", "7D"], ["30d", "30D"], ["90d", "90D"], ["1y", "12M"], ["all", "All"]]
+const RANGE_TEXT = { today: "today", "24h": "in the last 24 hours", "7d": "over the last 7 days", "30d": "over the last 30 days", "90d": "over the last 90 days", "1y": "over the last 12 months", all: "all time" }
+let range = localStorage.getItem("qr.range") || "7d"
+if (!RANGES.some(([k]) => k === range)) range = "7d"
+let state = null, summary = null, provTotals = {}, series = null
+let metric = localStorage.getItem("qr.metric") || "tokens"
+let by = "model", sgroup = localStorage.getItem("qr.sgroup") || "project", rfilter = ""
+const open = new Set(JSON.parse(localStorage.getItem("qr.open") || "[]"))
+const saveOpen = () => localStorage.setItem("qr.open", JSON.stringify([...open].slice(-200)))
+
+function segmented(el, items, current, onPick) {
+  el.innerHTML = items.map(([k, l, extra]) => '<button data-k="' + esc(k) + '" aria-pressed="' + (k === current) + '">' + esc(l) + (extra != null ? '<span class="n">' + esc(extra) + "</span>" : "") + "</button>").join("")
+  for (const b of el.querySelectorAll("button")) b.onclick = () => onPick(b.dataset.k)
+}
+
+// ---------- masthead ----------
+function ring(pct, col, size) {
+  const r = size / 2 - 2.5, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, pct / 100))
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + " " + size + '" aria-hidden="true"><circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" fill="none" stroke="var(--line-strong)" stroke-width="3"/>' +
+    '<circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" fill="none" stroke="' + col + '" stroke-width="3" stroke-linecap="round" stroke-dasharray="' + (c * f).toFixed(2) + " " + c.toFixed(2) + '" transform="rotate(-90 ' + size / 2 + " " + size / 2 + ')"/></svg>'
+}
+
+function limitedPool(p) { return p.pools.find((x) => (x.status === "cooling" || x.status === "blocked") && x.until > Date.now()) }
+
+function renderMast() {
+  const s = state
+  const session = s.claude.data && s.claude.data.windows.find((w) => w.label.startsWith("5-hour"))
+  const sp = session ? session.utilization : 0
+  $("mark").innerHTML = ring(sp, sp >= s.claude.cutoverAtPct ? "var(--bad)" : sp >= 85 ? "var(--warn)" : "var(--claude)", 22)
+
+  const serving = {}
+  for (const l of s.live) { const p = providerOf(l.model); if (p) serving[p] = (serving[p] || 0) + 1 }
+  const connected = s.providers.filter((p) => p.connected)
+  const top = connected[0]
+  const topLimited = top && limitedPool(top)
+  const nextFree = connected.find((p) => !limitedPool(p))
+  const parts = []
+  if (s.paused) parts.push("<b>Routing is paused.</b> Sessions stay on whatever model they are on.")
+  else if (topLimited) parts.push("<b>" + esc(pname(top.id)) + "</b> is limited until " + esc(fmtWhen(topLimited.until)) + (nextFree ? ", so requests go to <b>" + esc(pname(nextFree.id)) + "</b>." : ", and so is everything below it."))
+  const servers = Object.entries(serving)
+  if (servers.length) parts.push(servers.map(([p, k]) => "<b>" + esc(pname(p)) + "</b> is serving " + k + " " + plural(k, "session")).join("; ") + ".")
+  else if (!topLimited) parts.push("Nothing is running.")
+  if (session && !topLimited) parts.push("Claude's 5-hour window is " + Math.round(sp) + "% used, resetting " + esc(fmtTime(session.resetAt)) + ".")
+  $("headline").innerHTML = parts.join(" ")
+
+  const checked = []
+  if (s.claude.enabled) checked.push("Claude checked " + ago(s.claude.at))
+  if (s.copilot.enabled) checked.push("Copilot checked " + ago(s.copilot.at))
+  $("checked").textContent = checked.join(" · ")
+  const banner = $("banner")
+  if (s.warnings && s.warnings.length) { banner.hidden = false; banner.textContent = "Config: " + s.warnings.join("; ") } else banner.hidden = true
+}
+
+function renderMenu() {
+  const m = $("menu")
+  m.innerHTML = '<button data-a="probe">Check usage now</button><button data-a="pause">' + (state && state.paused ? "Resume routing" : "Pause routing") + "</button><hr>" +
+    '<div class="label">Export as CSV (' + esc(RANGE_TEXT[range]) + ")</div>" +
+    [["steps", "Requests"], ["sessions", "Sessions"], ["daily", "Daily totals"], ["routing", "Routing changes"], ["executions", "Executions"]]
+      .map(([t, l]) => '<a href="/api/export.csv?table=' + t + "&range=" + range + '">' + l + "</a>").join("")
+  for (const b of m.querySelectorAll("button")) b.onclick = async () => {
+    closeMenu()
+    if (b.dataset.a === "probe") await act({ action: "probe" })
+    else await act({ action: state && state.paused ? "resume" : "pause" })
+  }
+}
+function closeMenu() { $("menu").hidden = true; $("menuBtn").setAttribute("aria-expanded", "false") }
+$("menuBtn").onclick = (e) => { e.stopPropagation(); renderMenu(); const m = $("menu"); m.hidden = !m.hidden; $("menuBtn").setAttribute("aria-expanded", String(!m.hidden)) }
+document.addEventListener("click", (e) => { if (!$("menu").contains(e.target)) closeMenu() })
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu() })
+
+// ---------- route ladder ----------
+function gauge(label, pct, value, col, cut) {
+  pct = Math.max(0, Math.min(100, n(pct)))
+  const c = cut && pct >= cut ? "var(--bad)" : pct >= 85 ? "var(--warn)" : col
+  return '<div class="gauge"><span class="lab">' + esc(label) + '</span><span class="track" style="--c:' + c + '"><i style="width:' + pct + '%"></i>' + (cut ? '<span class="cut" style="left:' + cut + '%" title="Routing moves away at ' + cut + '%"></span>' : "") + '</span><span class="val">' + value + "</span></div>"
+}
+
+function renderLadder() {
+  const s = state, cl = s.claude, cp = s.copilot
+  const serving = {}
+  for (const l of s.live) { const p = providerOf(l.model); if (p) serving[p] = (serving[p] || 0) + 1 }
+  $("ladder").innerHTML = s.providers.map((p) => {
+    const col = color(p.id), lim = limitedPool(p), main = p.pools.find((x) => x.id === p.id)
+    let cap = ""
+    if (p.id === "claude-agent") {
+      if (cl.data) {
+        for (const w of cl.data.windows) cap += gauge(w.label.replace("Weekly (all models)", "Week").replace("Weekly (", "").replace(")", " wk").replace("5-hour session", "5-hour"), w.utilization, Math.round(w.utilization) + "% · " + esc(fmtTime(w.resetAt) && (w.resetAt - Date.now() < 864e5 ? fmtTime(w.resetAt) : fmtWhen(w.resetAt))), col, cl.cutoverAtPct)
+        const e = cl.data.extra
+        if (e) cap += '<div class="note">Usage credits ' + (e.enabled ? esc(money(e.used, e.currency)) + " of " + esc(e.limit != null ? money(e.limit, e.currency) : "no cap") + " used this month · routing leaves before they are drawn" : "off") + "</div>"
+      } else cap = '<div class="note">' + esc(cl.message || (cl.enabled ? "Waiting for the first usage check" : "Usage checks are off")) + "</div>"
+    } else if (p.id === "github-copilot") {
+      if (cp.data) {
+        const q = cp.data, used = n(q.used ?? q.entitlement - q.remaining), avail = n(q.entitlement)
+        const now = new Date(), mStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1), mEnd = q.resetAt || Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)
+        const proj = used / Math.max(0.03, (Date.now() - mStart) / (mEnd - mStart))
+        cap += gauge(q.name === "ai_credits" ? "Credits" : "Requests", avail ? used / avail * 100 : 0, fmtInt(used) + " / " + fmtInt(avail), col, Math.round(100 - s.copilot.reserveFraction * 100))
+        cap += '<div class="note">' + fmtInt(Math.max(0, avail - used)) + " left · on pace for " + '<span class="' + (proj > avail ? "st-warn" : "") + '">' + fmtInt(proj) + "</span> by " + esc(new Date(mEnd - 1).toLocaleDateString([], { day: "numeric", month: "short" })) + (q.name === "ai_credits" ? " · your share of the " + esc(q.plan || "") + " pool" : "") + (q.overageUsed ? ' · <span class="st-bad">' + fmtInt(q.overageUsed) + " beyond allowance</span>" : "") + "</div>"
+      } else cap = '<div class="note">' + esc(cp.message || (cp.enabled ? "Waiting for the first usage check" : "Usage checks are off")) + "</div>"
+    } else if (p.id === "xai") {
+      cap = '<div class="gauge"><span class="lab">Week</span><span class="track unknown"></span><span class="val muted">not reported</span></div><div class="note">xAI publishes no usage figures; limits are learned from errors.</div>'
+    } else if (main && main.utilization != null) {
+      cap = gauge("Rate limit", main.utilization, Math.round(main.utilization) + "%", col)
+    } else cap = '<div class="note">' + (p.kind === "metered" ? "Pay-per-use; used only when every subscription is limited." : "") + "</div>"
+
+    let st
+    if (!p.connected) st = '<span class="muted">Not connected</span>'
+    else if (lim) st = '<span class="' + (lim.status === "blocked" ? "st-bad" : "st-warn") + '">Limited · back ' + esc(fmtWhen(lim.until)) + '</span><span class="why">' + esc(lim.evidence || lim.kind) + ' · <button class="linkish" data-reset="' + esc(lim.id) + '">Clear</button></span>'
+    else if (p.pools.some((x) => (x.status === "cooling" || x.status === "blocked") && x.until <= Date.now())) st = '<span class="st-info">Ready to retry</span><span class="why">The next request tries it again</span>'
+    else if (serving[p.id]) st = '<span class="st-ok">Serving ' + serving[p.id] + " " + plural(serving[p.id], "session") + "</span>"
+    else if (p.pools.some((x) => x.status === "degraded")) st = '<span class="st-warn">Near its limit</span>'
+    else st = '<span class="soft">Available</span>'
+    for (const sub of p.pools.filter((x) => x.id !== p.id && (x.status === "cooling" || x.status === "blocked") && x.until > Date.now()))
+      st += '<span class="why">' + esc(sub.id.split(":")[1]) + " limited until " + esc(fmtWhen(sub.until)) + "</span>"
+
+    const t = provTotals[p.id]
+    const use = t ? fmtN(t.tokens) + ' tokens<div class="muted">' + fmtUSD(p.kind === "metered" ? t.actual : t.equiv) + (p.kind === "metered" ? " spent" : " at API prices") + "</div>" : '<span class="muted">No use ' + esc(RANGE_TEXT[range]) + "</span>"
+    return '<div class="rung' + (serving[p.id] ? " serving" : "") + (p.connected ? "" : " off") + '" style="--c:' + col + '"><span class="rank">' + p.priority + "</span>" +
+      '<div><div class="pname"><span class="dot" style="background:' + col + '"></span>' + esc(pname(p.id)) + '</div><div class="pkind">' + (p.kind === "metered" ? "Pay-per-use" : "Subscription") + "</div></div>" +
+      "<div>" + cap + '</div><div class="state">' + st + '</div><div class="usage">' + use + "</div></div>"
+  }).join("")
+  for (const b of $("ladder").querySelectorAll("[data-reset]")) b.onclick = () => act({ action: "reset-pool", pool: b.dataset.reset })
+}
+
+// ---------- totals ----------
+function renderLedger() {
+  const s = summary, r = s.routing || {}
+  const fb = n(r.failover) + n(r.resume) + n(r.wait) + n(r.deferred)
+  const cached = n(s.cache_read) + n(s.cache_write)
+  const figs = [
+    ["Tokens", fmtN(s.tokens), fmtN(s.input) + " in · " + fmtN(n(s.output) + n(s.reasoning)) + " out · " + fmtN(cached) + " cached"],
+    ["Value at API prices", fmtUSD(s.equiv), "What this would cost pay-per-use"],
+    ["Actual spend", fmtUSD(s.actual), "Pay-per-use APIs only"],
+    ["Saved by subscriptions", fmtUSD(Math.max(0, n(s.equiv) - n(s.actual))), s.equiv ? Math.round((1 - n(s.actual) / n(s.equiv)) * 100) + "% of the value was covered" : ""],
+    ["Model time", fmtDur(s.modelMs), n(s.sessions) + " " + plural(n(s.sessions), "session") + " · " + fmtInt(s.steps) + " requests"],
+    ["Fallbacks", String(fb), n(r.recovery) + " " + plural(n(r.recovery), "return") + " · " + n(s.failed) + " failed " + plural(n(s.failed), "request")],
+  ]
+  $("ledger").innerHTML = figs.map(([k, v, sub]) => '<div class="fig"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + '</div><div class="s">' + esc(sub) + "</div></div>").join("")
+  $("rangeCaption").textContent = "Usage " + RANGE_TEXT[range]
+}
+
+// ---------- running now (grouped by project, subagents under their parent) ----------
+function renderNow() {
+  const live = state.live
+  $("nowCount").textContent = live.length ? live.length + " " + plural(live.length, "session") : ""
+  if (!live.length) { $("now").innerHTML = '<div class="empty">Nothing is running.</div>'; return }
+  const ids = new Set(live.map((l) => l.sessionID))
+  const roots = live.filter((l) => !l.parentID || !ids.has(l.parentID))
+  const kids = (id) => live.filter((l) => l.parentID === id)
+  const byProject = {}
+  for (const r of roots) (byProject[r.directory || ""] ??= []).push(r)
+  const item = (l, child) => {
+    const meta = []
+    if (l.model) meta.push('<span class="model"><span class="dot" style="background:' + color(providerOf(l.model)) + '"></span>' + esc(l.model) + "</span>")
+    if (l.agent) meta.push(esc(l.agent))
+    for (const t of l.tools) meta.push(esc(t.name) + ' <span data-since="' + t.startedAt + '"></span>')
+    if (l.retry) meta.push('<span class="st-warn">retry ' + l.retry.attempt + " " + esc(until(l.retry.at)) + "</span>")
+    if (l.fallback) meta.push('<span class="st-warn" title="' + esc(l.fallback.reason || "") + '">fallback from ' + esc(l.fallback.from) + "</span>")
+    return '<div class="row' + (child ? " child" : "") + '"><div class="main"><div class="ttl" title="' + esc(l.sessionID) + '">' + esc(l.title || l.sessionID) + '</div><div class="meta">' + meta.join("") + '</div></div><span class="elapsed num" data-since="' + l.startedAt + '"></span></div>' +
+      kids(l.sessionID).map((k) => item(k, true)).join("")
+  }
+  const groups = Object.entries(byProject)
+  $("now").innerHTML = groups.map(([dir, rows]) => (groups.length > 1 || dir ? '<div class="grouphead"><b>' + esc(base(dir)) + '</b><span class="mono muted">' + esc(dir) + "</span></div>" : "") + '<div class="list">' + rows.map((r) => item(r, false)).join("") + "</div>").join("")
+  tick()
+}
+
+// ---------- routing: day → change → events ----------
+const KIND = {
+  failover: ["Fallback", "st-warn"], recovery: ["Returned", "st-ok"], preempt: ["Moved early", "st-info"], route: ["Routed", "st-info"],
+  resume: ["Continued", "st-warn"], wait: ["Waiting", "st-bad"], deferred: ["Scheduled", "st-bad"], exhausted: ["All limited", "st-bad"], manual: ["You switched", "soft"], "gave-up": ["Stopped", "st-bad"],
+}
+const FILTERS = [["", "All", "all"], ["fallback", "Fallbacks", "fallback"], ["return", "Returns", "return"], ["moved", "Moved early", "moved"], ["manual", "You switched", "manual"]]
+let rdays = [], rnext = null
+
+async function loadRouting(reset) {
+  if (reset) {
+    const sm = await api("/api/routing/summary?range=" + range)
+    segmented($("rfilters"), FILTERS.map(([k, l, c]) => [k, l, sm[c] || 0]), rfilter, (k) => { rfilter = k; loadRouting(true) })
+    rdays = []; rnext = null
+  }
+  const page = await api("/api/routing/days?range=" + range + (rfilter ? "&filter=" + rfilter : "") + (rnext && !reset ? "&before=" + rnext : ""))
+  rdays = reset ? page.days : rdays.concat(page.days)
+  rnext = page.next || null
+  renderRouting()
+}
+
+function renderRouting() {
+  const el = $("routing")
+  if (!rdays.length) { el.innerHTML = '<div class="empty">No routing changes ' + esc(RANGE_TEXT[range]) + ".</div>"; return }
+  el.innerHTML = rdays.map((d, i) => {
+    const key = "rday:" + d.day
+    const isOpen = open.has(key)
+    const counts = Object.entries(d.counts).sort((a, b) => b[1] - a[1]).map(([t, k]) => '<span class="' + (KIND[t] || [t, ""])[1] + '"><b>' + k + "</b> " + esc((KIND[t] || [t])[0].toLowerCase()) + "</span>").join("")
+    return '<div class="disc" data-day="' + esc(d.day) + '"' + (isOpen ? " open" : "") + '><button class="sum" aria-expanded="' + isOpen + '"><span class="chev">›</span><span style="flex:1">' + esc(dayLabel(d.day)) + '</span><span class="counts">' + counts + '</span></button><div class="body"></div></div>'
+  }).join("") + (rnext ? '<button class="more" id="rmore">Earlier days</button>' : "")
+  for (const d of el.querySelectorAll(".disc")) {
+    const btn = d.querySelector(".sum")
+    btn.onclick = () => {
+      const now = !d.hasAttribute("open")
+      d.toggleAttribute("open", now); btn.setAttribute("aria-expanded", String(now))
+      const day = d.dataset.day
+      if (now) { open.add("rday:" + day); loadDay(d) } else open.delete("rday:" + day)
+      saveOpen()
+    }
+    if (d.hasAttribute("open")) loadDay(d)
+  }
+  if (rnext) $("rmore").onclick = () => loadRouting(false)
+}
+
+async function loadDay(el) {
+  const body = el.querySelector(".body")
+  const page = await api("/api/routing/groups?range=" + range + "&day=" + el.dataset.day + "&limit=50" + (rfilter ? "&filter=" + rfilter : ""))
+  body.innerHTML = page.groups.map((g, i) => {
+    const [label, cls] = KIND[g.trigger] || [g.trigger, ""]
+    const span = g.n > 1 ? fmtTime(g.first_at) + "–" + fmtTime(g.last_at) : fmtTime(g.last_at)
+    const change = (g.from_model ? '<span class="model">' + esc(g.from_model) + '</span> <span class="muted">→</span> ' : "") + '<span class="model">' + esc(g.to_model) + "</span>"
+    return '<div class="chg" data-i="' + i + '"><span class="kind ' + cls + '">' + esc(label) + "</span><div>" + change +
+      '<div class="why">' + esc(g.evidence || "") + (g.until && g.until > Date.now() ? " · until " + esc(fmtWhen(g.until)) : "") + (g.n === 1 && g.title ? " · " + esc(g.title) : "") + "</div>" +
+      (g.n > 1 ? '<button class="more" data-ev>Show ' + g.n + " events across " + g.sessions + " " + plural(g.sessions, "session") + "</button>" : "") + '<ul class="events"></ul></div>' +
+      '<span class="num muted">' + (g.n > 1 ? "×" + g.n + " · " : "") + esc(span) + "</span></div>"
+  }).join("") || '<div class="empty">Nothing for this filter.</div>'
+  for (const row of body.querySelectorAll(".chg")) {
+    const b = row.querySelector("[data-ev]")
+    if (!b) continue
+    const g = page.groups[Number(row.dataset.i)]
+    let next = null, rows = []
+    b.onclick = async () => {
+      const ev = await api("/api/routing/events?day=" + g.day + "&trigger=" + encodeURIComponent(g.trigger) + "&from=" + encodeURIComponent(g.from_model) + "&to=" + encodeURIComponent(g.to_model) + (next ? "&before=" + next : ""))
+      rows = rows.concat(ev.rows); next = ev.next || null
+      row.querySelector(".events").innerHTML = rows.map((r) => "<li>" + esc(fmtTime(r.at)) + " · " + esc(r.title || r.session_id || "") + (r.evidence && r.evidence !== g.evidence ? " · " + esc(r.evidence) : "") + "</li>").join("")
+      if (next) b.textContent = "More events"; else b.remove()
+    }
+  }
+}
+
+// ---------- usage chart ----------
+const METRICS = [["tokens", "Tokens"], ["equiv", "Value"], ["actual", "Spend"]]
+const fmtFor = (m) => m === "tokens" ? fmtN : fmtUSD
+function bucketLabel(b, bucket, long) {
+  if (bucket === "hour") return long ? fmtWhen(new Date(b.replace(" ", "T") + ":00").getTime()) : b.slice(11, 13)
+  if (bucket === "month") return new Date(b + "-01T00:00:00").toLocaleDateString([], { month: "short", year: long ? "numeric" : "2-digit" })
+  const d = new Date(b + "T00:00:00")
+  return (bucket === "week" ? (long ? "Week of " : "") : "") + d.toLocaleDateString([], { day: "numeric", month: "short" })
+}
+
+function renderChart() {
+  const el = $("chart"), rows = series.rows, bucket = series.bucket, fmt = fmtFor(metric)
+  $("bucketCaption").textContent = { hour: "By hour", day: "By day", week: "By week", month: "By month" }[bucket]
+  if (!rows.length) { el.innerHTML = '<div class="empty">No usage ' + esc(RANGE_TEXT[range]) + ".</div>"; $("legend").innerHTML = ""; return }
+  const buckets = [...new Set(rows.map((r) => r.bucket))].sort()
+  const order = ["claude-agent", "xai", "github-copilot", "anthropic", "openai"]
+  const provs = [...new Set(rows.map((r) => r.provider))].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99))
+  const val = {}; for (const r of rows) val[r.bucket + "|" + r.provider] = n(r[metric])
+  const totals = buckets.map((b) => provs.reduce((s, p) => s + (val[b + "|" + p] || 0), 0))
+  const max = Math.max(...totals, 1e-9)
+  const W = Math.max(el.clientWidth, 320), H = 220, pl = 52, pb = 26, pt = 10, iw = W - pl, ih = H - pb - pt
+  const step = iw / buckets.length, bw = Math.max(2, Math.min(36, step * 0.62))
+  const ticks = 4, nice = (v) => { const p = Math.pow(10, Math.floor(Math.log10(v))), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p }
+  const top = nice(max / ticks) * ticks
+  let svg = '<svg height="' + H + '" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + esc(metric + " per " + bucket) + '">'
+  for (let i = 0; i <= ticks; i++) { const y = pt + ih - ih * i / ticks; svg += '<line x1="' + pl + '" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--line)" ' + (i ? 'stroke-dasharray="2 4"' : "") + '/><text x="' + (pl - 10) + '" y="' + (y + 4) + '" text-anchor="end">' + esc(fmt(top * i / ticks)) + "</text>" }
+  const every = Math.ceil(buckets.length / Math.max(4, Math.floor(iw / 70)))
+  buckets.forEach((b, i) => {
+    const x = pl + i * step + (step - bw) / 2
+    let y = pt + ih
+    for (const p of provs) { const v = val[b + "|" + p] || 0; if (!v) continue; const h = Math.max(1, ih * v / top); y -= h; svg += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + (h - (h > 3 ? 1 : 0)).toFixed(1) + '" rx="1.5" fill="' + color(p) + '"/>' }
+    svg += '<rect class="hit" data-b="' + esc(b) + '" x="' + (pl + i * step) + '" y="' + pt + '" width="' + step + '" height="' + ih + '" fill="transparent"/>'
+    if (i % every === 0) svg += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">' + esc(bucketLabel(b, bucket)) + "</text>"
+  })
+  el.innerHTML = svg + "</svg>"
+  $("legend").innerHTML = provs.map((p) => '<span><span class="dot" style="background:' + color(p) + '"></span>' + esc(pname(p)) + "</span>").join("")
+  const tip = $("tip")
+  for (const hit of el.querySelectorAll(".hit")) {
+    hit.onmousemove = (e) => {
+      const b = hit.dataset.b, items = provs.map((p) => [p, val[b + "|" + p] || 0]).filter((x) => x[1] > 0)
+      tip.innerHTML = "<div style='margin-bottom:4px'><b>" + esc(bucketLabel(b, bucket, true)) + "</b></div>" + items.map(([p, v]) => '<div class="r"><span><span class="dot" style="background:' + color(p) + '"></span>' + esc(pshort(p)) + "</span><span>" + esc(fmt(v)) + "</span></div>").join("") +
+        '<div class="r" style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><span>Total</span><span>' + esc(fmt(items.reduce((s, x) => s + x[1], 0))) + "</span></div>"
+      tip.style.display = "block"
+      const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 10)
+      tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px"
+    }
+    hit.onmouseleave = () => { tip.style.display = "none" }
+  }
+}
+
+function renderAllowances(claudeHist, copilotHist) {
+  const el = $("allow"), series2 = {}
+  for (const h of claudeHist) for (const w of h.data.windows || []) (series2["Claude " + w.label.replace("Weekly (all models)", "weekly").replace("5-hour session", "5-hour").replace("Weekly (", "weekly ").replace(")", "")] ??= []).push([h.at, w.utilization])
+  const cp = copilotHist.filter((h) => h.data && h.data.entitlement).map((h) => [h.at, Math.min(100, n(h.data.used ?? h.data.entitlement - h.data.remaining) / h.data.entitlement * 100)])
+  if (cp.length) series2["Copilot credits"] = cp
+  const all = Object.values(series2).flat()
+  if (!all.length) { el.innerHTML = '<div class="empty">No usage checks recorded ' + esc(RANGE_TEXT[range]) + " yet.</div>"; return }
+  const t0 = Math.min(...all.map((p) => p[0])), t1 = Math.max(...all.map((p) => p[0]), t0 + 1)
+  const W = Math.max(el.clientWidth, 320), H = 150, pl = 52, pb = 22, pt = 8, iw = W - pl - 4, ih = H - pb - pt
+  const X = (t) => pl + (t - t0) / (t1 - t0) * iw, Y = (v) => pt + ih - ih * Math.min(v, 100) / 100
+  const cols = { "Claude 5-hour": "var(--claude)", "Claude weekly": "color-mix(in srgb, var(--claude) 55%, var(--muted))", "Copilot credits": "var(--copilot)" }
+  let svg = '<svg height="' + H + '" viewBox="0 0 ' + W + " " + H + '">'
+  for (const v of [0, 50, 100]) svg += '<line x1="' + pl + '" x2="' + W + '" y1="' + Y(v) + '" y2="' + Y(v) + '" stroke="var(--line)" ' + (v ? 'stroke-dasharray="2 4"' : "") + '/><text x="' + (pl - 10) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + v + "%</text>"
+  if (state && state.claude) svg += '<line x1="' + pl + '" x2="' + W + '" y1="' + Y(state.claude.cutoverAtPct) + '" y2="' + Y(state.claude.cutoverAtPct) + '" stroke="var(--bad)" stroke-opacity=".45" stroke-dasharray="1 3"/>'
+  const names = Object.keys(series2)
+  names.forEach((name, i) => { const pts = series2[name]; svg += '<polyline fill="none" stroke="' + (cols[name] || ["var(--info)", "var(--anthropic)", "var(--openai)"][i % 3]) + '" stroke-width="1.75" stroke-linejoin="round" points="' + pts.map((p) => X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join(" ") + '"/>' })
+  for (let i = 0; i <= 4; i++) { const t = t0 + (t1 - t0) * i / 4; svg += '<text x="' + X(t) + '" y="' + (H - 4) + '" text-anchor="' + (i === 0 ? "start" : i === 4 ? "end" : "middle") + '">' + esc(fmtWhen(t)) + "</text>" }
+  el.innerHTML = svg + '</svg><div class="legend">' + names.map((name, i) => '<span><span class="dot" style="background:' + (cols[name] || ["var(--info)", "var(--anthropic)", "var(--openai)"][i % 3]) + '"></span>' + esc(name) + "</span>").join("") + '<span class="muted">Dotted line: Claude cut-over at ' + (state ? state.claude.cutoverAtPct : 98) + "%</span></div>"
+}
+
+// ---------- breakdown: grouped and capped ----------
+const BY = [["model", "Models"], ["project", "Projects"], ["agent", "Agents"], ["tools", "Tools"]]
+const TOP = 8
+function mix(r) {
+  const tot = n(r.input) + n(r.output) + n(r.reasoning) + n(r.cache_read) + n(r.cache_write) || 1
+  const seg = (v, c, t) => '<i style="width:' + (v / tot * 100).toFixed(1) + "%;background:" + c + '" title="' + t + '"></i>'
+  return '<span class="mix" title="' + esc(fmtN(r.input) + " in · " + fmtN(n(r.output) + n(r.reasoning)) + " out · " + fmtN(n(r.cache_read) + n(r.cache_write)) + " cached") + '">' + seg(n(r.input), "var(--info)", "input") + seg(n(r.output) + n(r.reasoning), "var(--warn)", "output") + seg(n(r.cache_read) + n(r.cache_write), "var(--line-strong)", "cached") + "</span>"
+}
+const usageCols = (r) => '<td class="num">' + fmtInt(r.steps) + '</td><td class="num">' + fmtN(r.tokens) + "</td><td>" + mix(r) + '</td><td class="num">' + fmtUSD(r.equiv) + '</td><td class="num">' + fmtUSD(r.actual) + '</td><td class="num">' + fmtDur(r.avg_ms) + '</td><td class="num">' + (n(r.failed) ? '<span class="st-warn">' + fmtInt(r.failed) + "</span>" : '<span class="muted">0</span>') + "</td>"
+const USAGE_HEAD = '<th class="num">Requests</th><th class="num">Tokens</th><th style="text-align:right">In · out · cached</th><th class="num">Value</th><th class="num">Spend</th><th class="num">Avg request</th><th class="num">Failed</th>'
+function sumRows(rows) {
+  const o = { steps: 0, tokens: 0, input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0, equiv: 0, actual: 0, failed: 0, ms: 0 }
+  for (const r of rows) { for (const k in o) if (k !== "ms") o[k] += n(r[k]); o.ms += n(r.avg_ms) * n(r.steps) }
+  o.avg_ms = o.steps ? o.ms / o.steps : 0
+  return o
+}
+
+async function loadBreakdown() {
+  segmented($("bytabs"), BY, by, (k) => { by = k; loadBreakdown() })
+  const el = $("breakdown")
+  if (by === "tools") {
+    const res = await api("/api/tools?range=" + range + "&limit=200")
+    const rows = res.rows, top = rows.slice(0, 10), rest = rows.slice(10)
+    if (!rows.length) { el.innerHTML = '<div class="empty">No tool calls ' + esc(RANGE_TEXT[range]) + ".</div>"; return }
+    const restSum = { calls: 0, failed: 0, total_ms: 0 }; for (const r of rest) { restSum.calls += n(r.calls); restSum.failed += n(r.failed); restSum.total_ms += n(r.total_ms) }
+    const tr = (r, cls) => "<tr" + (cls ? ' class="' + cls + '"' : "") + "><td>" + esc(r.name) + '</td><td class="num">' + fmtInt(r.calls) + '</td><td class="num">' + (n(r.failed) ? '<span class="st-warn">' + fmtInt(r.failed) + "</span>" : '<span class="muted">0</span>') + '</td><td class="num">' + fmtDur(r.avg_ms ?? (r.calls ? r.total_ms / r.calls : 0)) + '</td><td class="num">' + fmtDur(r.total_ms) + "</td></tr>"
+    el.innerHTML = '<table><thead><tr><th>Tool</th><th class="num">Calls</th><th class="num">Failed</th><th class="num">Avg time</th><th class="num">Total time</th></tr></thead><tbody>' +
+      top.map((r) => tr(r)).join("") + (rest.length ? '<tr class="grp other" data-other><td><span class="chev">›</span> ' + rest.length + " other tools</td>" + tr({ ...restSum, name: "" }).replace(/^<tr><td><\/td>/, "").replace("</tr>", "") + "</tr>" + rest.map((r) => tr(r, "sub other-row")).join("") : "") + "</tbody></table>"
+    wireOther(el)
+    return
+  }
+  const res = await api("/api/breakdown?range=" + range + "&by=" + by + "&limit=" + (by === "model" ? 300 : 300))
+  const rows = res.rows
+  if (!rows.length) { el.innerHTML = '<div class="empty">No usage ' + esc(RANGE_TEXT[range]) + ".</div>"; return }
+  let body = ""
+  if (by === "model") {
+    // Models nested under their provider, providers in route order, each with a subtotal.
+    const groups = {}
+    for (const r of rows) (groups[providerOf(r.key)] ??= []).push(r)
+    const order = ["claude-agent", "xai", "github-copilot", "anthropic", "openai"]
+    const keys = Object.keys(groups).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99))
+    for (const p of keys) {
+      const g = groups[p], tot = sumRows(g), k = "bd:" + p, isOpen = open.has(k)
+      body += '<tr class="grp" data-g="' + esc(k) + '" aria-expanded="' + isOpen + '"><td><span class="chev" style="' + (isOpen ? "transform:rotate(90deg)" : "") + '">›</span> <span class="dot" style="background:' + color(p) + '"></span>' + esc(pname(p)) + ' <span class="muted" style="font-weight:400">' + g.length + " " + plural(g.length, "model") + "</span></td>" + usageCols(tot) + "</tr>"
+      body += g.map((r) => '<tr class="sub" data-of="' + esc(k) + '"' + (isOpen ? "" : " hidden") + '><td class="model">' + esc(r.key.slice(p.length + 1)) + "</td>" + usageCols(r) + "</tr>").join("")
+    }
+  } else {
+    const top = rows.slice(0, TOP), rest = rows.slice(TOP)
+    const label = (r) => by === "project" ? esc(base(r.key)) + ' <span class="mono muted">' + esc(r.key) + "</span>" : esc(r.key)
+    body = top.map((r) => "<tr><td>" + label(r) + "</td>" + usageCols(r) + "</tr>").join("")
+    if (rest.length) {
+      const k = "bd-other:" + by, isOpen = open.has(k)
+      body += '<tr class="grp other" data-g="' + esc(k) + '"><td><span class="chev" style="' + (isOpen ? "transform:rotate(90deg)" : "") + '">›</span> ' + rest.length + " other " + (by === "project" ? "projects" : "agents") + "</td>" + usageCols(sumRows(rest)) + "</tr>"
+      body += rest.map((r) => '<tr class="sub" data-of="' + esc(k) + '"' + (isOpen ? "" : " hidden") + "><td>" + label(r) + "</td>" + usageCols(r) + "</tr>").join("")
+    }
+  }
+  el.innerHTML = "<table><thead><tr><th>" + { model: "Provider and model", project: "Project", agent: "Agent" }[by] + "</th>" + USAGE_HEAD + "</tr></thead><tbody>" + body + "</tbody></table>"
+  for (const tr of el.querySelectorAll("tr.grp[data-g]")) tr.onclick = () => {
+    const k = tr.dataset.g, now = !open.has(k)
+    now ? open.add(k) : open.delete(k); saveOpen()
+    for (const sub of el.querySelectorAll('tr[data-of="' + CSS.escape(k) + '"]')) sub.hidden = !now
+    tr.querySelector(".chev").style.transform = now ? "rotate(90deg)" : ""
+  }
+}
+function wireOther(el) {
+  const head = el.querySelector("[data-other]"); if (!head) return
+  const rows = el.querySelectorAll(".other-row"); for (const r of rows) r.hidden = true
+  head.onclick = () => { const show = rows[0].hidden; for (const r of rows) r.hidden = !show; head.querySelector(".chev").style.transform = show ? "rotate(90deg)" : "" }
+}
+
+// ---------- sessions: grouped by project or day, five at a time ----------
+const SGROUPS = [["project", "By project"], ["day", "By day"]]
+const PAGE = 5
+function sessionRow(r) {
+  const models = String(r.models || "").split(",").filter(Boolean)
+  return '<div class="row"><div class="main"><div class="ttl" title="' + esc(r.id) + '">' + (r.parent_id ? '<span class="muted">↳ </span>' : "") + esc(r.title || r.id) + '</div><div class="meta">' +
+    models.slice(0, 3).map((m) => '<span class="model"><span class="dot" style="background:' + color(providerOf(m)) + '"></span>' + esc(m) + "</span>").join("") + (models.length > 3 ? "<span>+" + (models.length - 3) + "</span>" : "") +
+    (n(r.fallbacks) ? '<span class="st-warn">' + r.fallbacks + " " + plural(n(r.fallbacks), "fallback") + "</span>" : "") +
+    "</div></div>" + '<div class="num" style="min-width:150px"><div>' + fmtN(r.tokens) + " · " + fmtUSD(r.equiv) + '</div><div class="muted" style="font-size:12px">' + (n(r.actual) ? fmtUSD(r.actual) + " spent · " : "") + esc(fmtWhen(r.last_at)) + "</div></div></div>"
+}
+
+async function loadSessions() {
+  segmented($("sgroup"), SGROUPS, sgroup, (k) => { sgroup = k; localStorage.setItem("qr.sgroup", k); loadSessions() })
+  const el = $("sessions"), q = $("sq").value.trim()
+  if (q) {
+    // Searching shows a flat list of matches, paged.
+    let cursor = null, rows = []
+    const more = async () => {
+      const page = await api("/api/sessions?range=" + range + "&q=" + encodeURIComponent(q) + "&limit=20" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""))
+      rows = rows.concat(page.rows); cursor = page.next || null
+      el.innerHTML = rows.length ? '<div class="list">' + rows.map(sessionRow).join("") + "</div>" + (cursor ? '<button class="more" id="smore">More matches</button>' : "") : '<div class="empty">No sessions match.</div>'
+      if (cursor) $("smore").onclick = more
+    }
+    return more()
+  }
+  const groups = await api("/api/sessions/groups?range=" + range + "&by=" + sgroup)
+  if (!groups.length) { el.innerHTML = '<div class="empty">No sessions ' + esc(RANGE_TEXT[range]) + ".</div>"; return }
+  el.innerHTML = '<div class="list">' + groups.map((g, i) => {
+    const k = "sg:" + sgroup + ":" + g.key, isOpen = open.has(k)
+    const title = sgroup === "day" ? esc(dayLabel(g.key)) : esc(base(g.key)) + ' <span class="mono muted">' + esc(g.key) + "</span>"
+    return '<div class="disc" data-k="' + esc(g.key) + '"' + (isOpen ? " open" : "") + '><button class="sum" aria-expanded="' + isOpen + '"><span class="chev">›</span><span style="flex:1;min-width:0" class="ttl">' + title + '</span><span class="counts"><span><b>' + g.sessions + "</b> " + plural(g.sessions, "session") + "</span><span><b>" + fmtN(g.tokens) + "</b> tokens</span><span><b>" + fmtUSD(g.equiv) + "</b> value</span>" + (n(g.actual) ? "<span><b>" + fmtUSD(g.actual) + "</b> spent</span>" : "") + (n(g.fallbacks) ? '<span class="st-warn"><b>' + g.fallbacks + "</b> " + plural(n(g.fallbacks), "fallback") + "</span>" : "") + "<span>" + esc(fmtWhen(g.last_at)) + '</span></span></button><div class="body"></div></div>'
+  }).join("") + "</div>"
+  for (const d of el.querySelectorAll(".disc")) {
+    const btn = d.querySelector(".sum"), key = d.dataset.k
+    let cursor = null, loaded = false
+    const loadPage = async () => {
+      const page = await api("/api/sessions?range=" + range + "&" + (sgroup === "day" ? "day=" + key : "project=" + encodeURIComponent(key)) + "&limit=" + (loaded ? 20 : PAGE) + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""))
+      const body = d.querySelector(".body")
+      body.querySelector(".more")?.remove()
+      body.insertAdjacentHTML("beforeend", page.rows.map(sessionRow).join(""))
+      cursor = page.next || null; loaded = true
+      if (cursor) { body.insertAdjacentHTML("beforeend", '<button class="more">Show more sessions</button>'); body.querySelector(".more").onclick = loadPage }
+    }
+    btn.onclick = () => {
+      const now = !d.hasAttribute("open")
+      d.toggleAttribute("open", now); btn.setAttribute("aria-expanded", String(now))
+      const ok = "sg:" + sgroup + ":" + key
+      if (now) { open.add(ok); if (!loaded) loadPage() } else open.delete(ok)
+      saveOpen()
+    }
+    if (d.hasAttribute("open")) loadPage()
+  }
+}
+
+// ---------- loading ----------
+async function refreshState() {
+  try {
+    state = await api("/api/state")
+    renderMast(); renderLadder(); renderNow()
+    $("footer").innerHTML = "Quota Router " + esc(state.version) + " · running since " + esc(fmtWhen(state.started)) + " · local only, stored in ~/.local/share/opencode-quota-router<br>" +
+      Object.entries(state.chains).map(([k, v]) => "<span class='soft'>" + esc(k) + "</span> " + v.map(esc).join(" → ")).join("<br>")
+  } catch (e) { $("headline").textContent = "Can't reach the plugin. Is OpenCode running?" }
+}
+
+async function refreshRange() {
+  segmented($("range"), RANGES, range, (k) => { range = k; localStorage.setItem("qr.range", k); refreshRange() })
+  segmented($("metric"), METRICS, metric, (k) => { metric = k; localStorage.setItem("qr.metric", k); renderChart() })
+  const [s, ser, prov, ch, cp] = await Promise.all([
+    api("/api/summary?range=" + range), api("/api/series?range=" + range), api("/api/breakdown?range=" + range + "&by=provider&limit=50"),
+    api("/api/usage-history?provider=claude-agent&range=" + range), api("/api/usage-history?provider=github-copilot&range=" + range),
+  ])
+  summary = s; series = ser; provTotals = Object.fromEntries(prov.rows.map((p) => [p.key, p]))
+  renderLedger(); renderChart(); renderAllowances(ch, cp)
+  if (state) renderLadder()
+  await Promise.all([loadRouting(true), loadBreakdown(), loadSessions()])
+}
+
+function tick() { for (const el of document.querySelectorAll("[data-since]")) el.textContent = fmtDur(Date.now() - Number(el.dataset.since)) }
+
+let rangeTimer = null
+const scheduleRange = () => { if (rangeTimer) return; rangeTimer = setTimeout(() => { rangeTimer = null; refreshRange().catch(() => {}) }, 3000) }
+function connect() {
+  const es = new EventSource("/api/stream")
+  const live = $("live")
+  es.addEventListener("hello", () => { live.classList.add("on"); live.querySelector("span").textContent = "Live" })
+  es.addEventListener("change", (e) => { const kinds = JSON.parse(e.data); refreshState(); if (kinds.some((k) => k !== "live" && k !== "tick")) scheduleRange() })
+  es.onerror = () => { live.classList.remove("on"); live.querySelector("span").textContent = "Reconnecting" }
+}
+let sqTimer = null
+$("sq").oninput = () => { clearTimeout(sqTimer); sqTimer = setTimeout(loadSessions, 250) }
+setInterval(() => { tick(); if (state) renderMast() }, 1000)
+setInterval(refreshState, 15000)
+let resizeTimer = null
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (series) renderChart() }, 150) })
+refreshState().then(refreshRange); connect()
+</script>
+</body>
+</html>

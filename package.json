@@ -1,0 +1,57 @@
+{
+  "name": "opencode-quota-router",
+  "version": "0.1.0",
+  "description": "Quota-aware provider routing, fallback and recovery for OpenCode V2, with a local usage dashboard",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./gui-experimental": "./dist/gui-experimental.cjs"
+  },
+  "files": [
+    "src",
+    "gui",
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.2.5",
+    "@types/node": "^24.0.0",
+    "electron": "^45.2.3",
+    "solid-js": "^1.9.18",
+    "typescript": "^5.9.0",
+    "vite": "^7.3.8",
+    "vite-plugin-solid": "^2.11.15"
+  },
+  "license": "MIT",
+  "author": "aicowboi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aicowboi/opencode-quota-router.git"
+  },
+  "homepage": "https://github.com/aicowboi/opencode-quota-router#readme",
+  "bugs": {
+    "url": "https://github.com/aicowboi/opencode-quota-router/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "llm",
+    "routing",
+    "fallback",
+    "rate-limit",
+    "claude",
+    "copilot",
+    "grok"
+  ]
+}

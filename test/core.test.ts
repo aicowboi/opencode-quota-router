@@ -1,0 +1,224 @@
+import { test } from "node:test"
+import assert from "node:assert/strict"
+import { classify, modelPools } from "../src/classify.ts"
+import { loadConfig, parseRef } from "../src/config.ts"
+import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/resets.ts"
+import { PoolStore } from "../src/pools.ts"
+import { findInChains, mapVariant, orderedChain, route } from "../src/router.ts"
+import { costOf, estimate } from "../src/pricing.ts"
+import type { ModelInfo } from "../src/types.ts"
+
+// Monday 2026-11-09 11:00 local
+const NOW = new Date(2026, 10, 9, 11, 0, 0).getTime()
+
+test("parseRef handles variants and gateway IDs", () => {
+  assert.deepEqual(parseRef("claude-agent/opus#medium"), { providerID: "claude-agent", id: "opus", variant: "medium" })
+  assert.deepEqual(parseRef("openrouter/anthropic/claude"), { providerID: "openrouter", id: "anthropic/claude" })
+  assert.throws(() => parseRef("nope"))
+})
+
+test("reset text: ISO, local times, weekdays, epoch, regain", () => {
+  assert.equal(parseResetText("Claude Code subscription limit reached (five hour). Resets at 2026-11-09T16:00:00.000Z.", NOW), Date.parse("2026-11-09T16:00:00.000Z"))
+  assert.equal(parseResetText("You've hit your session limit · resets 3:45pm", NOW), new Date(2026, 10, 9, 15, 45).getTime())
+  assert.equal(parseResetText("resets 9am (Europe/London)", NOW), new Date(2026, 10, 10, 9, 0).getTime())
+  assert.equal(parseResetText("You've hit your weekly limit · resets Mon 12:00am", NOW), new Date(2026, 10, 16, 0, 0).getTime())
+  assert.equal(parseResetText("Claude AI usage limit reached|1794250000", NOW), 1794250000 * 1000)
+  assert.equal(parseResetText("You will regain access on 2026-12-01 at 00:00 UTC.", NOW), Date.parse("2026-12-01T00:00:00Z"))
+  assert.equal(parseResetText("rate limited, try again", NOW), undefined)
+})
+
+test("retry-after and durations", () => {
+  assert.equal(parseRetryAfter("30", NOW), 30_000)
+  assert.equal(parseRetryAfter("Tue, 01 Dec 2026 00:00:00 GMT", NOW), Date.parse("2026-12-01T00:00:00Z") - NOW)
+  assert.equal(parseDuration("6m0s"), 360_000)
+  assert.equal(parseDuration("250ms"), 250)
+  assert.equal(parseDuration("1h2m3.5s"), 3_723_500)
+  assert.equal(nextMonthUtc(Date.parse("2026-11-09T12:00:00Z")), Date.parse("2026-12-01T00:00:00Z"))
+})
+
+test("classify: Claude subscription window with exact reset", () => {
+  const s = classify("claude-agent", "opus", { type: "provider.unknown", message: "Claude Code subscription limit reached (five hour). Resets at 2026-11-09T16:00:00.000Z." }, NOW)
+  assert.equal(s?.kind, "window")
+  assert.deepEqual(s?.pools, ["claude-agent"])
+  assert.equal(s?.resetAt, Date.parse("2026-11-09T16:00:00.000Z"))
+})
+
+test("classify: Claude per-model weekly limit only blocks that family", () => {
+  const s = classify("claude-agent", "opus", { type: "provider.unknown", message: "Claude Code subscription limit reached (seven day opus). Resets at 2026-11-16T09:00:00Z." }, NOW)
+  assert.deepEqual(s?.pools, ["claude-agent:opus"])
+  const t = classify("claude-agent", "opus", { type: "provider.unknown", message: "You've hit your Opus limit · resets Mon 12:00am" }, NOW)
+  assert.deepEqual(t?.pools, ["claude-agent:opus"])
+  assert.equal(t?.kind, "window")
+})
+
+test("classify: Claude overload and harmless notices", () => {
+  assert.equal(classify("claude-agent", "opus", { type: "provider.unknown", message: "Anthropic is overloaded (529). Claude Code exhausted its retries. Try again shortly." }, NOW)?.kind, "overload")
+  assert.equal(classify("anthropic", "x", { type: "provider.unknown", message: "Third-party apps now draw from your extra usage" }, NOW), undefined)
+})
+
+test("classify: deterministic errors never route", () => {
+  assert.equal(classify("anthropic", "x", { type: "provider.content-filter", message: "blocked" }, NOW), undefined)
+  assert.equal(classify("anthropic", "x", { type: "provider.invalid-request", message: "prompt is too long: 1200000 tokens" }, NOW), undefined)
+  assert.equal(classify("anthropic", "x", { type: "aborted", message: "Aborted" }, NOW), undefined)
+})
+
+test("classify: Anthropic API spend cap lasts until the 1st", () => {
+  const s = classify("anthropic", "claude-opus-5-5", { type: "provider.rate-limit", status: 429, message: "You have reached your monthly spend limit. You will regain access on 2026-12-01 at 00:00 UTC.", response: { body: '{"type":"error","error":{"type":"rate_limit_error","details":{"error_code":"enforced_spend_limit_reached"}}}' } }, NOW)
+  assert.equal(s?.kind, "billing")
+  assert.equal(s?.resetAt, Date.parse("2026-12-01T00:00:00Z"))
+  assert.equal(classify("anthropic", "x", { type: "provider.invalid-request", status: 400, message: "You have reached your specified API usage limits." }, NOW)?.kind, "billing")
+  assert.equal(classify("anthropic", "x", { type: "provider.internal", status: 529, message: "Overloaded" }, NOW)?.kind, "overload")
+})
+
+test("classify: throttles keep retry-after", () => {
+  const s = classify("openai", "gpt-6.1-sol", { type: "provider.rate-limit", status: 429, message: "Rate limit reached for requests", retryAfterMs: 30_000, response: { body: '{"error":{"code":"rate_limit_exceeded"}}' } }, NOW)
+  assert.equal(s?.kind, "throttle")
+  assert.equal(s?.retryAfterMs, 30_000)
+})
+
+test("classify: xAI, Copilot and OpenAI billing shapes", () => {
+  assert.equal(classify("xai", "grok-4.7", { type: "provider.auth", status: 403, message: "You have run out of credits or need a Grok subscription", response: { body: '{"code":"personal-team-blocked:spending-limit"}' } }, NOW)?.kind, "window")
+  const c = classify("github-copilot", "claude-opus-5.5", { type: "provider.quota", status: 402, message: "You have exceeded your monthly quota", retryAfterMs: Date.parse("2026-12-01T00:00:00Z") - NOW, response: { body: '{"error":{"code":"quota_exceeded"}}' } }, NOW)
+  assert.equal(c?.kind, "billing")
+  assert.equal(c?.resetAt, Date.parse("2026-12-01T00:00:00Z"))
+  assert.equal(classify("github-copilot", "x", { type: "provider.rate-limit", status: 429, message: "You've hit your global rate limit", response: { body: '{"error":{"code":"user_global_rate_limited:pro"}}' } }, NOW)?.kind, "window")
+  assert.equal(classify("openai", "x", { type: "provider.quota", status: 429, message: "You exceeded your current quota", response: { body: '{"error":{"type":"insufficient_quota","code":"credit_balance_exhausted"}}' } }, NOW)?.kind, "billing")
+})
+
+test("classify: generic fallbacks", () => {
+  assert.equal(classify("mock", "m", { type: "provider.rate-limit", status: 429, message: "slow down" }, NOW)?.kind, "throttle")
+  assert.equal(classify("mock", "m", { type: "provider.quota", message: "quota" }, NOW)?.kind, "billing")
+  assert.equal(classify("mock", "m", { type: "provider.internal", status: 503, message: "down" }, NOW)?.kind, "overload")
+  assert.equal(classify("mock", "m", { type: "provider.unknown", message: "Claude Code subscription limit reached (five hour). Resets at 2026-11-09T16:00:00.000Z." }, NOW)?.kind, "window")
+  assert.equal(classify("mock", "m", { type: "provider.unknown", message: "something odd" }, NOW), undefined)
+})
+
+test("modelPools splits Claude families", () => {
+  assert.deepEqual(modelPools("claude-agent", "opus"), ["claude-agent", "claude-agent:opus"])
+  assert.deepEqual(modelPools("claude-agent", "claude-sonnet-5"), ["claude-agent", "claude-agent:sonnet"])
+  assert.deepEqual(modelPools("xai", "grok-4.7"), ["xai"])
+})
+
+const cfg = () => loadConfig({}).config
+
+test("config: defaults, overrides and warnings", () => {
+  const { config, warnings } = loadConfig({ throttle: { maxWaitMs: 5000 }, bogus: 1, chains: { opus: ["a/b", "bad"] }, providers: { xai: { priority: 9 } } })
+  assert.equal(config.throttle.maxWaitMs, 5000)
+  assert.equal(config.throttle.inPlaceRetries, 2)
+  assert.equal(config.chains.opus.length, 1)
+  assert.equal(config.providers.xai.priority, 9)
+  assert.equal(config.providers.xai.kind, "subscription")
+  assert.ok(warnings.some((w) => w.includes("bogus")))
+  assert.ok(warnings.some((w) => w.includes("bad")))
+})
+
+test("pools: window until reset, half-open after, success clears", () => {
+  let now = NOW
+  const pools = new PoolStore(cfg(), () => now)
+  pools.report({ kind: "window", pools: ["claude-agent"], resetAt: NOW + 3_600_000, evidence: "5h" })
+  assert.equal(pools.usable("claude-agent"), "no")
+  now = NOW + 3_600_000 + 61_000
+  assert.equal(pools.usable("claude-agent"), "trial")
+  pools.success(["claude-agent"])
+  assert.equal(pools.usable("claude-agent"), "yes")
+})
+
+test("pools: throttle backs off, probe cutover survives in-flight success", () => {
+  let now = NOW
+  const pools = new PoolStore(cfg(), () => now)
+  pools.report({ kind: "throttle", pools: ["xai"], evidence: "429" })
+  assert.equal(pools.get("xai").until, NOW + 60_000)
+  now += 61_000
+  pools.report({ kind: "throttle", pools: ["xai"], evidence: "429" })
+  assert.equal(pools.get("xai").until, now + 120_000)
+
+  pools.usage("claude-agent", { utilization: 99, resetAt: now + 1000_000, exhausted: true, warn: true, evidence: "99%" })
+  pools.success(["claude-agent"])
+  assert.equal(pools.usable("claude-agent"), "no")
+  pools.usage("claude-agent", { utilization: 3, exhausted: false, warn: false, evidence: "3%" })
+  assert.equal(pools.usable("claude-agent"), "yes")
+})
+
+test("pools: billing blocks until the month boundary", () => {
+  const pools = new PoolStore(cfg(), () => NOW)
+  pools.report({ kind: "billing", pools: ["github-copilot"], resetAt: Date.parse("2026-12-01T00:00:00Z"), evidence: "402" })
+  assert.equal(pools.get("github-copilot").status, "blocked")
+  assert.equal(pools.get("github-copilot").until, Date.parse("2026-12-01T00:00:00Z") + 60_000)
+})
+
+const MODELS = new Map<string, ModelInfo>(
+  [
+    ["claude-agent", "opus", ["low", "medium", "high", "xhigh", "max"], 1_000_000],
+    ["xai", "grok-4.7", ["low", "medium", "high", "xhigh"], 500_000],
+    ["github-copilot", "claude-opus-5.5", ["low", "medium", "high", "xhigh", "max"], 1_000_000],
+    ["anthropic", "claude-opus-5-5", ["low", "medium", "high", "xhigh", "max"], 1_000_000],
+    ["openai", "gpt-6.1-sol", ["low", "medium", "high", "xhigh", "max"], 1_050_000],
+  ].map(([p, id, variants, context]) => [`${p}/${id}`, { providerID: p as string, id: id as string, variants: variants as string[], context: context as number }]),
+)
+
+test("router: priority order, failover, context fit and recovery", () => {
+  let now = NOW
+  const config = cfg()
+  const pools = new PoolStore(config, () => now)
+  const preferred = { ...findInChains(config, { providerID: "claude-agent", id: "opus" })!, variant: "medium" }
+  assert.equal(orderedChain(config, "opus")[0].providerID, "claude-agent")
+
+  let r = route({ config, pools, models: MODELS, preferred, mode: "turn" })
+  assert.deepEqual(r.target, { providerID: "claude-agent", id: "opus", variant: "medium" })
+
+  pools.report({ kind: "window", pools: ["claude-agent"], resetAt: NOW + 3_600_000, evidence: "5h" })
+  r = route({ config, pools, models: MODELS, preferred, mode: "failover", exclude: new Set(["claude-agent"]) })
+  assert.deepEqual(r.target, { providerID: "xai", id: "grok-4.7", variant: "high" })
+
+  // 600K tokens of context rule out Grok's 500K window.
+  r = route({ config, pools, models: MODELS, preferred, mode: "failover", lastInputTokens: 600_000 })
+  assert.equal(r.target?.providerID, "github-copilot")
+
+  pools.report({ kind: "window", pools: ["xai"], evidence: "weekly" })
+  pools.report({ kind: "billing", pools: ["github-copilot"], evidence: "credits" })
+  r = route({ config, pools, models: MODELS, preferred, mode: "turn" })
+  assert.equal(r.target?.providerID, "anthropic")
+
+  now = NOW + 3_600_000 + 61_000
+  r = route({ config, pools, models: MODELS, preferred, mode: "turn" })
+  assert.equal(r.target?.providerID, "claude-agent")
+  assert.equal(r.target && "usable" in r ? r.usable : undefined, "trial")
+})
+
+test("router: nothing usable reports the earliest reset", () => {
+  const config = cfg()
+  const pools = new PoolStore(config, () => NOW)
+  for (const p of ["claude-agent", "xai", "github-copilot", "anthropic", "openai"]) pools.report({ kind: "window", pools: [p], resetAt: NOW + (p === "xai" ? 600_000 : 3_600_000), evidence: "x" })
+  const r = route({ config, pools, models: MODELS, preferred: { chain: "opus", index: 0 }, mode: "failover" })
+  assert.equal(r.target, undefined)
+  assert.equal(!r.target ? r.earliest : 0, NOW + 600_000 + 60_000)
+})
+
+test("router: a manually picked lower-priority model still routes by priority, keeping its effort", () => {
+  const config = cfg()
+  const pools = new PoolStore(config, () => NOW)
+  const r = route({ config, pools, models: MODELS, preferred: { chain: "opus", index: 3, variant: "high" }, mode: "turn" })
+  assert.deepEqual(r.target, { providerID: "claude-agent", id: "opus", variant: "high" })
+})
+
+test("mapVariant carries effort offsets and clamps to supported", () => {
+  const opus = parseRef("claude-agent/opus#medium")
+  assert.equal(mapVariant(parseRef("xai/grok-4.7#high"), opus, "medium", ["low", "medium", "high", "xhigh"]), "high")
+  assert.equal(mapVariant(parseRef("xai/grok-4.7#high"), opus, "high", ["low", "medium", "high", "xhigh"]), "xhigh")
+  assert.equal(mapVariant(parseRef("xai/grok-4.7#high"), opus, "max", ["low", "medium", "high", "xhigh"]), "xhigh")
+  assert.equal(mapVariant(parseRef("x/y#medium"), opus, "default", []), undefined)
+})
+
+test("pricing: equivalent cost for subscriptions, actual only for metered", () => {
+  const config = cfg()
+  const models = new Map<string, ModelInfo>([
+    ["anthropic/claude-opus-5-5", { providerID: "anthropic", id: "claude-opus-5-5", variants: [], cost: [{ input: 4, output: 20, cache: { read: 0.2, write: 5 } }] }],
+  ])
+  const tokens = { input: 1000, output: 1000, reasoning: 0, cache: { read: 100_000, write: 0 } }
+  assert.equal(costOf(models.get("anthropic/claude-opus-5-5")!.cost, tokens), (4000 + 20000 + 20000) / 1e6)
+  const sub = estimate(config, models, "claude-agent", "opus", tokens, 0)
+  assert.ok(sub.equivalent > 0)
+  assert.equal(sub.actual, 0)
+  const api = estimate(config, models, "anthropic", "claude-opus-5-5", tokens, 0.05)
+  assert.equal(api.actual, 0.05)
+})
