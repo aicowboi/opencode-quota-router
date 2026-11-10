@@ -245,6 +245,11 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
     <div id="sessions"></div>
   </section>
 
+  <section aria-labelledby="h-alerts" id="alerts" hidden>
+    <div class="sec-head"><h2 id="h-alerts">Notifications</h2><span class="caption">Fallbacks, returns, spend caps and failing usage checks from the last 30 days</span></div>
+    <div id="alertList" aria-live="polite"></div>
+  </section>
+
   <section aria-labelledby="h-doctor" id="doctor">
     <div class="sec-head"><h2 id="h-doctor">Health check</h2><span class="caption" id="doctorCaption">What is connected, what would be used, and what needs attention</span><span class="spacer"></span><button class="more" id="doctorRun">Run check</button></div>
     <div id="doctorList"></div>
@@ -582,6 +587,18 @@ async function loadDay(el) {
   }
 }
 
+// ---------- notifications ----------
+const ALERT = { fallback: "st-warn", return: "st-ok", allLimited: "st-bad", spendCap: "st-warn", usageCheck: "st-warn" }
+async function loadAlerts() {
+  try {
+    const d = await api("/api/notifications?limit=20")
+    $("alerts").hidden = !d.alerts.length
+    $("alertList").innerHTML = d.alerts.slice().reverse().map((a) => '<div class="check"><span class="' + (ALERT[a.kind] || "muted") + '" aria-hidden="true">●</span><div><div>' + esc(a.title) +
+      ' <span class="muted">· ' + esc(fmtWhen(a.at)) + "</span></div>" + (a.body ? '<div class="why">' + esc(a.body) + "</div>" : "") + "</div></div>").join("")
+  } catch {}
+}
+loadAlerts()
+
 // ---------- health check ----------
 const CHECK = { ok: ["✓", "st-ok", "OK"], warn: ["!", "st-warn", "Needs attention"], fail: ["✕", "st-bad", "Problem"], info: ["·", "muted", "Note"] }
 async function loadDoctor() {
@@ -828,7 +845,7 @@ function connect() {
   const es = new EventSource("/api/stream")
   const live = $("live")
   es.addEventListener("hello", () => { live.classList.add("on"); live.querySelector("span").textContent = "Live" })
-  es.addEventListener("change", (e) => { const kinds = JSON.parse(e.data); refreshState(); if (kinds.some((k) => k !== "live" && k !== "tick")) scheduleRange() })
+  es.addEventListener("change", (e) => { const kinds = JSON.parse(e.data); refreshState(); if (kinds.includes("alerts")) loadAlerts(); if (kinds.some((k) => k !== "live" && k !== "tick")) scheduleRange() })
   es.onerror = () => { live.classList.remove("on"); live.querySelector("span").textContent = "Reconnecting" }
 }
 let sqTimer = null

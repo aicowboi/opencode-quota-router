@@ -1,5 +1,6 @@
 // Process-wide state shared by every plugin instance: pools, sessions, store, usage probes, dashboard.
 import path from "node:path"
+import { feed, raise, type AlertInput } from "./alerts.ts"
 import { checkSetting, loadConfig, overlay, refKey, refLabel, type Config } from "./engine/config.ts"
 import { modelPools } from "./engine/classify.ts"
 import { localDay, Store } from "./db.ts"
@@ -253,6 +254,43 @@ export class Core {
     this.rebuildConfig()
   }
 
+  // ---------- notifications ----------
+
+  /** Raise a notification. Dropped when its kind is turned off or it repeats a recent one. */
+  alert(a: AlertInput) {
+    try {
+      const raised = raise(this.store, this.config, a)
+      if (!raised) return
+      this.log.info("alert", { kind: a.kind, title: a.title })
+      this.notify("alerts")
+    } catch (error) {
+      this.log.warn("alert failed", { error: String(error) })
+    }
+  }
+
+  alerts(opts: { after?: number; limit?: number } = {}) {
+    return feed(this.store, opts)
+  }
+
+  private failingSince = new Map<string, number>()
+
+  /** Conditions noticed by looking rather than by an event: a spend cap reached, a usage check that keeps failing. */
+  checkAlerts(now = Date.now()) {
+    for (const [id, b] of Object.entries(this.spendBlocks(now))) {
+      this.alert({ kind: "spendCap", key: `${id} ${b.until ?? ""}`, title: id === "*" ? "Spend cap reached" : `Spend cap reached for ${id}`, body: `${b.reason}. Routing passes ${id === "*" ? "pay-per-use providers" : id} over until ${new Date(b.until ?? now).toLocaleString()}.` })
+    }
+    for (const [name, enabled, status] of [["Claude", this.config.claude.usageProbe, this.claude], ["Copilot", this.config.copilot.usageProbe, this.copilot]] as const) {
+      if (!enabled || !status.at || status.ok) {
+        this.failingSince.delete(name)
+        continue
+      }
+      const since = this.failingSince.get(name) ?? now
+      this.failingSince.set(name, since)
+      // One failed check is routine (a login being refreshed, a busy endpoint); ten minutes of them is not.
+      if (now - since >= 10 * 60_000) this.alert({ kind: "usageCheck", key: name, title: `${name} usage check is failing`, body: `${status.message ?? "No answer"}. Until it works, a limit is only seen when a request fails.` })
+    }
+  }
+
   // ---------- change notification (dashboard live updates) ----------
 
   subscribe(listener: (kinds: string[]) => void) {
@@ -389,6 +427,12 @@ export class Core {
     if (r.sessionID) markDirty(this.store, r.sessionID, undefined)
     this.log.info("route", { sessionID: r.sessionID, trigger: r.trigger, ...(dry ? { dry } : {}), from: r.from && refLabel(r.from), to: r.to && refLabel(r.to), evidence: r.evidence ?? r.signal?.evidence })
     this.notify("routing")
+    if (dry) return
+    const why = r.evidence ?? r.signal?.evidence
+    const to = r.to && refLabel(r.to)
+    if ((r.trigger === "failover" || r.trigger === "preempt") && r.to) this.alert({ kind: "fallback", key: r.sessionID, sessionID: r.sessionID, title: `Moved to ${to}`, body: [r.from && `From ${refLabel(r.from)}`, why].filter(Boolean).join(": ") })
+    else if (r.trigger === "recovery" && r.to) this.alert({ kind: "return", key: r.sessionID, sessionID: r.sessionID, title: `Back on ${to}`, body: why })
+    else if (r.trigger === "exhausted") this.alert({ kind: "allLimited", sessionID: r.sessionID, title: "Every provider is limited", body: "Nothing in the chain can take the request. The dashboard shows when each one is free again." })
   }
 
   /**
@@ -580,6 +624,7 @@ export class Core {
       if (!this.copilot.at || Date.now() - this.copilot.at >= (copilotBusy ? 60_000 : interval)) void this.probeCopilot(true)
       void this.refreshModels()
       this.maintain()
+      this.checkAlerts()
       this.notify("tick")
     }
     const t = setInterval(tick, 30_000)

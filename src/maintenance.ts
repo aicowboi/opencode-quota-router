@@ -1,4 +1,5 @@
 // Background upkeep that keeps the store fast over years: daily rollups, cached session totals, retention.
+import { pruneAlerts } from "./alerts.ts"
 import { localDay, type Store } from "./db.ts"
 
 export type Retention = { toolsDays: number; executionsDays: number; snapshotsDays: number; poolLogDays: number }
@@ -95,6 +96,7 @@ export function prune(store: Store, now: number, r: Retention) {
       before(r.snapshotsDays),
       before(r.snapshotsDays),
     )
+    pruneAlerts(store, now)
   })
 }
 

@@ -84,6 +84,13 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
   if (core.chatgptActive()) add(core.chatgpt.at ? { id: "probe-chatgpt", status: "ok", title: "ChatGPT plan windows are being read", detail: `Last seen ${minutes(now - core.chatgpt.at)} ago` } : { id: "probe-chatgpt", status: "info", title: "ChatGPT plan windows appear after the first request" })
 
+  // Notifications
+  const nf = config.notifications
+  const off = Object.entries(nf.events).filter(([, on]) => !on).map(([k]) => k)
+  if (!nf.enabled) add({ id: "notifications", status: "info", title: "Notifications are turned off" })
+  else add({ id: "notifications", status: "ok", title: `Notifications are on${nf.system ? ", and also sent through the operating system" : ""}`, detail: off.length ? `Turned off: ${off.join(", ")}` : undefined })
+  if (nf.enabled && nf.system && !["darwin", "linux"].includes(process.platform)) add({ id: "notifications-system", status: "warn", title: "System notifications are not supported on this platform", fix: 'Remove "system": true from notifications.' })
+
   // Dashboard
   if (!config.dashboard.enabled) add({ id: "dashboard", status: "info", title: "Dashboard is turned off" })
   else if (!core.dashboardURL) add({ id: "dashboard", status: "fail", title: "Dashboard could not start", detail: `Ports ${config.dashboard.port}–${config.dashboard.port + 4} were all taken.`, fix: "Set dashboard.port to a free port." })

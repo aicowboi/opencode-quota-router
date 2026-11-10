@@ -7,6 +7,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ### Added
 
 - Dry run: `/router dry-run on` records what routing would do, as "Would: …" rows in the routing log, without moving a session or changing a retry.
+- Notifications for fallbacks, returns, every provider being limited, spend caps and failing usage checks: on the dashboard, in the menu bar, as toasts in the OpenCode terminal, and optionally through the operating system (`notifications.system`). Rate-limited, and each kind can be turned off.
 - Spend caps for pay-per-use providers: `spend.dailyUsd`, `spend.monthlyUsd`, and the same per provider. A provider that has reached its cap is passed over until the day or month ends.
 - `/router doctor` and a Health check section on the dashboard: connected providers, chains with no fallback, models a provider no longer offers, failing usage checks, and what to change.
 - Settings can be changed while OpenCode runs. They are stored in the plugin's database on top of `opencode.jsonc`, which is never written to.

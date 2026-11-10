@@ -236,7 +236,7 @@ test("store: rollups match raw rows, pagination and retention", async () => {
   const { Store, localDay } = await import("../src/db.ts")
   const m = await import("../src/maintenance.ts")
   const store = await Store.open(path.join(tmp, "big.db"))
-  assert.equal(store.meta("schema_version"), "3")
+  assert.equal(store.meta("schema_version"), "4")
   assert.equal(Number((store.get("PRAGMA auto_vacuum") as any).auto_vacuum), 2, "incremental auto-vacuum")
   const now = Date.now()
   const DAY = 86_400_000
@@ -328,6 +328,7 @@ test("dashboard serves the page and state, and rejects foreign hosts", async () 
     assert.match(await page.text(), /quota-router/)
     const state: any = await (await fetch(`${d.url}/api/state`)).json()
     assert.ok(Array.isArray(state.providers) && state.providers[0].id === "claude-agent")
+    assert.deepEqual(Object.keys(await (await fetch(`${d.url}/api/notifications?after=0`)).json()), ["alerts", "last"])
     const doctor: any = await (await fetch(`${d.url}/api/doctor`)).json()
     assert.ok(doctor.checks.some((c: any) => c.id === "routing" && c.status === "ok"))
     // fetch cannot override Host, so use a raw request, as a DNS-rebinding page would produce.
@@ -482,4 +483,88 @@ test("spend cap: recorded spend stops failover onto a pay-per-use provider", asy
   core.store.run("DELETE FROM steps WHERE id = 'cap1'")
   ;(core as any).spendCache = undefined
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+})
+
+test("notifications: raised once per event, rate-limited, switchable, and read through one feed", async () => {
+  const { raise, feed, systemNotify, pruneAlerts } = await import("../src/alerts.ts")
+  const { follower } = await import("../src/tui.ts")
+  core.store.run("DELETE FROM notifications")
+  const sid = "ses_alert"
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  const grok = { providerID: "xai", id: "grok-4.7", variant: "high" }
+
+  // A terminal that opened before anything happened shows only what comes after.
+  const toasts: any[] = []
+  const poll = follower(async (after) => core.alerts(after === undefined ? { limit: 1 } : { after }), (t) => toasts.push(t))
+  await poll()
+
+  core.recordRouting({ sessionID: sid, trigger: "failover", from: opus, to: grok, evidence: "5-hour limit" })
+  core.recordRouting({ sessionID: sid, trigger: "failover", from: opus, to: grok, evidence: "5-hour limit" })
+  core.recordRouting({ sessionID: sid, trigger: "recovery", from: grok, to: opus, evidence: "Claude is free again" })
+  core.recordRouting({ sessionID: sid, trigger: "manual", from: opus, to: grok })
+  let f = core.alerts()
+  assert.deepEqual(f.alerts.map((a: any) => `${a.kind}: ${a.title}`), ["fallback: Moved to xai/grok-4.7#high", "return: Back on claude-agent/opus#medium"])
+  assert.equal(f.alerts[0].body, "From claude-agent/opus#medium: 5-hour limit")
+  assert.equal(f.last, f.alerts[1].id)
+  assert.deepEqual(core.alerts({ after: f.alerts[0].id }).alerts.map((a: any) => a.kind), ["return"])
+
+  await poll()
+  await poll()
+  assert.deepEqual(toasts.map((t) => `${t.variant}: ${t.title}`), ["warning: Moved to xai/grok-4.7#high", "success: Back on claude-agent/opus#medium"])
+  assert.equal(toasts[0].sessionID, sid)
+
+  // A kind that is turned off raises nothing, and neither does anything in a dry run.
+  core.setSetting("notifications.events.fallback", false)
+  core.recordRouting({ sessionID: "ses_other", trigger: "failover", from: opus, to: grok })
+  core.setSetting("notifications", undefined)
+  core.setSetting("dryRun", true)
+  core.recordRouting({ sessionID: "ses_other", trigger: "failover", from: opus, to: grok })
+  core.setSetting("dryRun", undefined)
+  assert.equal(core.alerts().alerts.length, 2)
+
+  // Conditions found by looking: a spend cap, and a usage check that has failed for a while.
+  const { localDay } = await import("../src/db.ts")
+  core.store.run("INSERT INTO steps (id, session_id, provider_id, model_id, started_at, day, status, cost_actual) VALUES ('cap2', 'ses_other', 'openai', 'gpt-6.1-sol', ?, ?, 'ok', 2)", Date.now(), localDay(Date.now()))
+  core.setSetting("spend.providers.openai.dailyUsd", 1)
+  ;(core as any).spendCache = undefined
+  core.setOptions({ claude: { usageProbe: true }, copilot: { usageProbe: false }, backfill: false, dashboard: { enabled: false } })
+  const now = Date.now()
+  core.claude = { at: now, ok: false, message: "Usage endpoint returned HTTP 500" }
+  core.checkAlerts(now)
+  core.checkAlerts(now + 11 * 60_000)
+  core.checkAlerts(now + 12 * 60_000)
+  f = core.alerts()
+  assert.deepEqual(f.alerts.slice(2).map((a: any) => a.title), ["Spend cap reached for openai", "Claude usage check is failing"])
+  assert.match(f.alerts[2].body!, /daily spend cap reached \(\$2\.00 of \$1\.00 on openai\)/)
+  const { buildMenubar } = await import("../src/dashboard/server.ts")
+  assert.equal(buildMenubar(core).alerts[0].title, "Claude usage check is failing")
+  const { present } = await import("../gui/present.ts")
+  assert.ok(present(buildMenubar(core) as any).sections.flat().some((i) => i.label === "Notifications — 4"))
+
+  // System notifications are off unless asked for, and their text is only ever an argument.
+  const calls: Array<[string, string[]]> = []
+  const exec = (file: string, args: string[]) => void calls.push([file, args])
+  const evil = 'x" & do shell script "touch /tmp/pwned'
+  assert.equal(systemNotify(evil, "$(id)", "darwin", exec), true)
+  assert.equal(systemNotify("t", "b", "linux", exec), true)
+  assert.equal(systemNotify("t", "b", "win32", exec), false)
+  assert.deepEqual(calls[0][1].slice(-3), ["--", evil, "$(id)"])
+  assert.ok(!calls[0][1].slice(0, -3).join(" ").includes("pwned"))
+  assert.deepEqual(calls[1], ["notify-send", ["--app-name=quota-router", "--", "t", "b"]])
+  const sent: string[] = []
+  const config = { ...core.config, notifications: { ...core.config.notifications, system: true } }
+  assert.ok(raise(core.store, config, { kind: "allLimited", title: "Every provider is limited" }, now, (t) => (sent.push(t), true)))
+  assert.deepEqual(sent, ["Every provider is limited"])
+
+  // No more than twenty an hour, and old ones are dropped.
+  for (let i = 0; i < 30; i++) raise(core.store, core.config, { kind: "fallback", key: `k${i}`, title: "x" }, now, () => true)
+  assert.equal(core.store.get("SELECT COUNT(*) AS n FROM notifications WHERE at > ?", now - 3_600_000).n, 20)
+  pruneAlerts(core.store, now + 31 * 86_400_000)
+  assert.equal(feed(core.store).alerts.length, 0)
+
+  core.claude = { ok: false }
+  core.setSetting("spend", undefined)
+  core.store.run("DELETE FROM steps WHERE id = 'cap2'")
+  ;(core as any).spendCache = undefined
+  core.setOptions({ claude: { usageProbe: false }, copilot: { usageProbe: false }, backfill: false, dashboard: { enabled: false } })
 })

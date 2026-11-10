@@ -14,6 +14,7 @@ export type Menubar = {
   providers: Array<{ id: string; priority: number; kind: string; status: string; until?: number; evidence?: string; serving: number }>
   live: Array<{ title: string; project?: string; startedAt: number; model?: string; fallback?: string }>
   today: { tokens: number; equiv: number; actual: number; steps: number }
+  alerts?: Array<{ id: number; at: number; kind: string; title: string; body?: string }>
   last?: { at: number; trigger: string; from_model?: string; to_model?: string; evidence?: string; title?: string }
 }
 
@@ -149,6 +150,10 @@ export function present(data: Menubar | undefined, cutoverAtPct = 98): View {
       sublabel: data.last.evidence ?? data.last.title,
       enabled: false,
     })
+
+  // Notifications from the last day, newest first.
+  const alerts: Item[] = (data.alerts ?? []).map((a) => ({ label: `${a.title} · ${when(a.at, now)}`, sublabel: a.body, enabled: false }))
+  if (alerts.length) activity.push({ label: `Notifications — ${alerts.length}`, submenu: alerts })
 
   return {
     title,

@@ -64,6 +64,11 @@ export type Config = {
    * limit is reached, routing stops choosing that provider until the day or month ends.
    */
   spend: { dailyUsd: number; monthlyUsd: number; providers: Record<string, SpendCap> }
+  /**
+   * Things worth knowing about without watching the dashboard. They appear on the dashboard, in the menu bar and as
+   * toasts in the terminal; `system` also posts them through the operating system. Each kind can be turned off.
+   */
+  notifications: { enabled: boolean; system: boolean; events: { fallback: boolean; return: boolean; allLimited: boolean; spendCap: boolean; usageCheck: boolean } }
   /** Days of raw detail to keep. Daily rollups, steps, routing and sessions are kept for good. */
   retention: { toolsDays: number; executionsDays: number; snapshotsDays: number; poolLogDays: number }
   log: { level: "debug" | "info" | "warn" }
@@ -132,6 +137,7 @@ export const DEFAULTS: Config = {
   dashboard: { enabled: true, port: 47321, host: "127.0.0.1", menubar: true },
   backfill: true,
   spend: { dailyUsd: 0, monthlyUsd: 0, providers: {} },
+  notifications: { enabled: true, system: false, events: { fallback: true, return: true, allLimited: true, spendCap: true, usageCheck: true } },
   retention: { toolsDays: 400, executionsDays: 400, snapshotsDays: 90, poolLogDays: 730 },
   log: { level: "info" },
 }

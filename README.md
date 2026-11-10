@@ -177,11 +177,14 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 - the route, with each provider's live state and allowances;
 - running sessions;
 - a routing log grouped by day;
+- notifications from the last 30 days;
 - a health check of your setup;
 - usage charts, breakdowns by model, project, agent and tool, and searchable sessions;
 - CSV export.
 
 **Menu bar** (OpenCode Desktop only): a ring showing Claude's 5-hour window, with short status text. Its menu shows allowances, the route, running sessions, today's totals and quick actions. Turn it off with `"dashboard": { "menubar": false }`.
+
+**Notifications:** quota-router tells you when a session falls back, when it returns, when every provider is limited, when a spend cap is reached, and when a usage check has been failing for ten minutes. They appear on the dashboard, in the menu bar's menu, and as toasts in the OpenCode terminal. Set `"notifications": { "system": true }` to also get them from the operating system (`osascript` on macOS, `notify-send` on Linux). The same thing is not repeated within a few minutes, there are never more than 20 an hour, and each kind can be turned off under `notifications.events`. A notification holds model and provider names and the reason for the change; never a prompt, a session title or any code.
 
 **Data:** `~/.local/share/opencode-quota-router/router.db` (SQLite) holds daily rollups, cached session totals and retention settings, sized for years of use. On first start, earlier usage is imported read-only from OpenCode's own database.
 
@@ -223,6 +226,9 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `spend.dailyUsd` / `monthlyUsd` | 0 (no cap) | Most that pay-per-use providers may cost in a local day or month, in US dollars |
 | `spend.providers.<id>.dailyUsd` / `monthlyUsd` | 0 (no cap) | The same, for one provider |
 | `headers.observe` | anthropic, github-copilot | Providers whose rate-limit headers are read. Adding `openai` or `xai` turns off their WebSocket transport. |
+| `notifications.enabled` | true | Record notifications and show them on the dashboard, in the menu bar and as terminal toasts |
+| `notifications.system` | false | Also post them through the operating system (macOS and Linux) |
+| `notifications.events.<kind>` | true | Turn one kind off: `fallback`, `return`, `allLimited`, `spendCap`, `usageCheck` |
 | `dashboard.enabled` / `port` / `menubar` | true / 47321 / true | Local dashboard and menu bar item |
 | `backfill` | true | Import earlier OpenCode usage on first start |
 | `retention.toolsDays` / `executionsDays` / `snapshotsDays` / `poolLogDays` | 400 / 400 / 90 / 730 | Days of raw detail kept; rollups and requests are kept for good |

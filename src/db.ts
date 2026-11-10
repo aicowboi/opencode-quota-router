@@ -150,6 +150,18 @@ export class Store {
         this.setMeta("schema_version", "3")
       })
     }
+    if (version < 4) {
+      this.transaction(() => {
+        this.driver.exec(`
+          CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL, body TEXT, session_id TEXT);
+          CREATE INDEX IF NOT EXISTS notifications_kind ON notifications (kind, key, at);
+          CREATE INDEX IF NOT EXISTS notifications_at ON notifications (at);
+        `)
+        this.setMeta("schema_version", "4")
+      })
+    }
   }
 
   private stmt(sql: string): Statement {

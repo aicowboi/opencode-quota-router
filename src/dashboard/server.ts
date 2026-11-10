@@ -54,6 +54,7 @@ export function buildMenubar(core: Core) {
     }),
     today: { tokens: today.tokens ?? 0, equiv: today.equiv ?? 0, actual: today.actual ?? 0, steps: today.steps ?? 0 },
     last,
+    alerts: core.alerts({ limit: 5 }).alerts.filter((a) => a.at > now - 86_400_000).reverse(),
   }
 }
 
@@ -153,6 +154,8 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           return json(res, buildState(core))
         case "/api/doctor":
           return json(res, { at: Date.now(), checks: runDoctor(core) })
+        case "/api/notifications":
+          return json(res, core.alerts({ after: url.searchParams.has("after") ? num("after", 0) : undefined, limit: num("limit", 50) }))
         case "/api/menubar":
           return json(res, buildMenubar(core))
         case "/api/summary":
