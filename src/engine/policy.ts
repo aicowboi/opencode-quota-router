@@ -8,19 +8,26 @@ import type { ModelRef } from "./types.ts"
  * Why an entry is passed over, and when the policy lifts. The router never waits for a policy to lift: a spend cap or
  * a schedule is a decision not to use a provider, unlike a limit that is waited out.
  */
-export type Block = { reason: string; until?: number }
+export type Block = {
+  reason: string
+  until?: number
+  /** A preference, not a rule: the entry is used when nothing else in the chain is available. */
+  soft?: boolean
+}
 export type Gate = (entry: ModelRef) => Block | undefined
 
-/** One gate from several: the first policy that blocks an entry decides. */
+/** One gate from several: the first policy that blocks an entry decides, and a hard block outranks a soft one. */
 export function composeGates(gates: Array<Gate | undefined>): Gate | undefined {
   const list = gates.filter((g): g is Gate => !!g)
   if (list.length === 0) return undefined
   return (entry) => {
+    let soft: Block | undefined
     for (const gate of list) {
       const block = gate(entry)
-      if (block) return block
+      if (block && !block.soft) return block
+      soft ??= block
     }
-    return undefined
+    return soft
   }
 }
 

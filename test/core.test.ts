@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { classify, modelPools } from "../src/engine/classify.ts"
 import { checkSetting, loadConfig, overlay, parseRef, withSetting } from "../src/engine/config.ts"
 import { composeGates, parseUntil, saveGate, spendBlocks, spendGate } from "../src/engine/policy.ts"
+import { forecast, paceGate, type WindowForecast } from "../src/engine/forecast.ts"
 import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
 import { findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
@@ -329,4 +330,67 @@ test("agent chains: an agent maps to a chain that exists", () => {
   // A stored setting is checked the same way.
   assert.equal(checkSetting({}, {}, "agents.plan", chain).ok, true)
   assert.deepEqual(checkSetting({}, {}, "agents.plan", "no-such-chain"), { ok: false, error: "agents.plan: there is no chain named no-such-chain; ignored" })
+})
+
+test("forecast: pace over the recent part of a window, restarted by a reset", () => {
+  const H = 3_600_000
+  const five = { resetAt: NOW + 3 * H, windowMs: 5 * H, limitPct: 98, now: NOW }
+  // 20 points in the last hour, at 60% now: 38 points to go takes 1.9 hours, which is before the reset.
+  let f = forecast([{ at: NOW - H, pct: 40 }, { at: NOW - H / 2, pct: 50 }, { at: NOW - 60_000, pct: 60 }], five)!
+  assert.equal(Math.round(f.ratePerHour), 20)
+  assert.equal(f.runsOutAt, NOW + 1.9 * H)
+  assert.equal(f.beforeReset, true)
+  // The same pace with the reset an hour away is fine.
+  f = forecast([{ at: NOW - H, pct: 40 }, { at: NOW - 60_000, pct: 60 }], { ...five, resetAt: NOW + H })!
+  assert.equal(f.beforeReset, false)
+  // Time with no new usage slows the pace: the last figure still stands now.
+  f = forecast([{ at: NOW - H, pct: 40 }, { at: NOW - H + 600_000, pct: 60 }], five)!
+  assert.equal(Math.round(f.ratePerHour), 20)
+  // Older than the lookback (an hour for a 5-hour window) is not counted, and nor is anything before a drop.
+  f = forecast([{ at: NOW - 3 * H, pct: 0 }, { at: NOW - H / 2, pct: 58 }, { at: NOW - 60_000, pct: 60 }], five)!
+  assert.equal(Math.round(f.ratePerHour), 4)
+  f = forecast([{ at: NOW - H / 2, pct: 90 }, { at: NOW - H / 3, pct: 2 }, { at: NOW - 60_000, pct: 6 }], five)!
+  assert.equal(Math.round(f.ratePerHour), 12)
+  // Already at the limit.
+  assert.equal(forecast([{ at: NOW - H / 2, pct: 90 }, { at: NOW - 60_000, pct: 99 }], five)!.runsOutAt, NOW)
+  // A weekly window looks back about a day and a half.
+  f = forecast([{ at: NOW - 30 * H, pct: 10 }, { at: NOW - H, pct: 40 }], { resetAt: NOW + 48 * H, windowMs: 168 * H, limitPct: 100, now: NOW })!
+  assert.equal(Math.round(f.ratePerHour), 1)
+  assert.equal(f.beforeReset, false)
+  // Too little to go on: flat usage, under five minutes of history, one figure, or a window that has already reset.
+  assert.equal(forecast([{ at: NOW - H, pct: 40 }, { at: NOW - 60_000, pct: 40 }], five), undefined)
+  assert.equal(forecast([{ at: NOW - 240_000, pct: 40 }, { at: NOW - 60_000, pct: 45 }], five), undefined)
+  assert.equal(forecast([{ at: NOW - H / 2, pct: 40 }], five), undefined)
+  assert.equal(forecast([], five), undefined)
+  assert.equal(forecast([{ at: NOW - H, pct: 40 }, { at: NOW - 60_000, pct: 60 }], { ...five, resetAt: NOW - 1 }), undefined)
+})
+
+test("pace guard: light work prefers another provider, and still uses the plan when nothing else can run", () => {
+  const config = cfg({ pace: { enabled: true } })
+  const pools = new PoolStore(config, () => NOW)
+  const preferred = { chain: "opus", index: 0 }
+  const short: WindowForecast = { providerID: "claude-agent", pool: "claude-agent", label: "Claude 5-hour session", pct: 60, limitPct: 98, resetAt: NOW + 3 * 3_600_000, ratePerHour: 20, runsOutAt: NOW + 1.9 * 3_600_000, beforeReset: true }
+  assert.equal(paceGate(cfg(), [short], true, NOW), undefined)
+  assert.equal(paceGate(config, [short], false, NOW), undefined)
+  assert.equal(paceGate(config, [{ ...short, beforeReset: false }], true, NOW), undefined)
+  const gate = paceGate(config, [short], true, NOW)!
+  assert.equal(gate({ providerID: "claude-agent", id: "opus" })?.soft, true)
+  assert.equal(gate({ providerID: "xai", id: "grok-4.7" }), undefined)
+  // A forecast for one model's weekly limit only concerns that model.
+  const fable = paceGate(config, [{ ...short, pool: "claude-agent:fable" }], true, NOW)!
+  assert.equal(fable({ providerID: "claude-agent", id: "opus" }), undefined)
+  assert.equal(fable({ providerID: "claude-agent", id: "fable" })?.soft, true)
+
+  let r = route({ config, pools, models: MODELS, preferred, mode: "turn", gate })
+  assert.equal(r.target?.providerID, "xai")
+  assert.match(r.skipped[0], /on pace to run out at .*kept for the main session/)
+  // Everything after Claude is limited: the plan is used after all, rather than waiting.
+  for (const p of ["xai", "github-copilot", "anthropic", "openai"]) pools.report({ kind: "window", pools: [p], resetAt: NOW + 3_600_000, evidence: "limit" })
+  r = route({ config, pools, models: MODELS, preferred, mode: "failover", gate })
+  assert.equal(r.target?.providerID, "claude-agent")
+  assert.ok(!r.skipped.some((line) => line.includes("on pace")))
+  // A hard block from another policy outranks the soft one.
+  const both = composeGates([gate, saveGate({ "claude-agent": NOW + 1000 }, NOW)])!
+  assert.equal(both({ providerID: "claude-agent", id: "opus" })?.soft, undefined)
+  assert.equal(route({ config, pools, models: MODELS, preferred, mode: "failover", gate: both }).target, undefined)
 })

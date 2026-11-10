@@ -84,6 +84,14 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
   if (core.chatgptActive()) add(core.chatgpt.at ? { id: "probe-chatgpt", status: "ok", title: "ChatGPT plan windows are being read", detail: `Last seen ${minutes(now - core.chatgpt.at)} ago` } : { id: "probe-chatgpt", status: "info", title: "ChatGPT plan windows appear after the first request" })
 
+  // Pace guard
+  if (config.pace.enabled) {
+    const fed = (config.claude.usageProbe && core.hasProvider("claude-agent")) || (config.copilot.usageProbe && core.hasProvider("github-copilot")) || core.chatgptActive()
+    if (!fed) add({ id: "pace", status: "warn", title: "The pace guard has nothing to measure", detail: "It works from the usage checks, and none is on.", fix: "Turn on claude.usageProbe or copilot.usageProbe, or sign in to OpenAI with ChatGPT." })
+    else add({ id: "pace", status: "ok", title: "The pace guard is on", detail: `Subagents${config.pace.lightAgents.length ? ` and ${config.pace.lightAgents.join(", ")}` : ""} pass over a plan that is on pace to run out before it resets.` })
+  }
+  for (const f of core.forecasts(now)) if (f.beforeReset) add({ id: `pace-${f.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, status: "info", title: `${f.label} is on pace to run out before it resets`, detail: `At ${Math.round(f.pct)}% and rising ${f.ratePerHour.toFixed(1)} points an hour: it reaches ${Math.round(f.limitPct)}% around ${new Date(f.runsOutAt).toLocaleString()}${f.resetAt ? `, and resets ${new Date(f.resetAt).toLocaleString()}` : ""}.`, fix: config.pace.enabled ? undefined : "/router pace on keeps subagents off it until it resets." })
+
   // Agents with their own chain
   for (const [agent, chain] of Object.entries(config.agents)) add({ id: `agent-${agent}`, status: "info", title: `The ${agent} agent uses the ${chain} chain`, detail: "Its sessions prefer that chain's first entry, unless you pick a model in the session." })
 

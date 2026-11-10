@@ -150,7 +150,7 @@ export default {
     await ctx.command.transform((editor: any) => {
       editor.add({
         name: "router",
-        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | save <provider> [2h|17:00|off] | agent <name> <chain|off> | doctor | telemetry on|off",
+        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | save <provider> [2h|17:00|off] | agent <name> <chain|off> | pace on|off | doctor | telemetry on|off",
         execute: async (input: { sessionID: string; prompt: { text?: string } }) => {
           const { sessionID, prompt } = input
           core.log.info("command", { sessionID, text: prompt?.text })
@@ -184,6 +184,13 @@ export default {
               const on = arg !== "off"
               const r = core.setSetting("dryRun", on)
               text = !r.ok ? r.error : on ? "Dry run is on: routing decisions are recorded on the dashboard, and no session is moved." : "Dry run is off: routing is live again."
+              break
+            }
+            case "pace": {
+              const on = arg !== "off"
+              const r = core.setSetting("pace.enabled", on)
+              const short = core.forecasts().filter((f) => f.beforeReset).map((f) => `${f.label} at ${new Date(f.runsOutAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)
+              text = !r.ok ? r.error : on ? `The pace guard is on: subagents${core.config.pace.lightAgents.length ? ` and the ${core.config.pace.lightAgents.join(", ")} agent${core.config.pace.lightAgents.length > 1 ? "s" : ""}` : ""} pass over a plan that is on pace to run out before it resets. ${short.length ? `On pace to run out now: ${short.join("; ")}.` : "No plan is on pace to run out now."}` : "The pace guard is off."
               break
             }
             case "agent": {

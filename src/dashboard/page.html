@@ -394,6 +394,12 @@ function gauge(label, pct, value, col, cut) {
   return '<div class="gauge"><span class="lab">' + esc(label) + '</span><span class="track" style="--c:' + c + '"><i style="width:' + pct + '%"></i>' + (cut ? '<span class="cut" style="left:' + cut + '%" title="Routing moves away at ' + cut + '%"></span>' : "") + '</span><span class="val">' + value + "</span></div>"
 }
 
+// Where a plan window is heading at its recent pace. Only said when it would run out before it resets.
+function paceNotes(provider) {
+  return (state.forecasts || []).filter((f) => f.providerID === provider && f.beforeReset).map((f) =>
+    '<div class="note"><span class="st-warn">' + esc(f.label.replace(/^(Claude|ChatGPT|Copilot) /, "")) + " on pace to run out " + esc(f.runsOutAt - Date.now() < 864e5 ? "at " + fmtTime(f.runsOutAt) : fmtWhen(f.runsOutAt)) + "</span> · resets " + esc(f.resetAt - Date.now() < 864e5 ? fmtTime(f.resetAt) : fmtWhen(f.resetAt)) + (state.pace && state.pace.enabled ? " · subagents are routed elsewhere" : "") + "</div>").join("")
+}
+
 function renderLadder() {
   const s = state, cl = s.claude, cp = s.copilot
   const serving = {}
@@ -407,6 +413,7 @@ function renderLadder() {
     if (p.id === "claude-agent") {
       if (cl.data) {
         for (const w of cl.data.windows) cap += gauge(w.label.replace("Weekly (all models)", "Week").replace("Weekly (", "").replace(")", " wk").replace("5-hour session", "5-hour"), w.utilization, Math.round(w.utilization) + "% · " + esc(fmtTime(w.resetAt) && (w.resetAt - Date.now() < 864e5 ? fmtTime(w.resetAt) : fmtWhen(w.resetAt))), col, cl.cutoverAtPct)
+        cap += paceNotes("claude-agent")
         const e = cl.data.extra
         if (e) cap += '<div class="note">Usage credits ' + (e.enabled ? esc(money(e.used, e.currency)) + " of " + esc(e.limit != null ? money(e.limit, e.currency) : "no cap") + " used this month · routing leaves before they are drawn" : "off") + "</div>"
       } else cap = '<div class="note">' + esc(cl.message || (cl.enabled ? "Waiting for the first usage check" : "Usage checks are off")) + "</div>"
@@ -423,6 +430,7 @@ function renderLadder() {
     } else if (p.id === "openai" && chatgpt()) {
       const w = s.chatgpt.data ? s.chatgpt.data.windows : []
       for (const x of w) cap += gauge(x.label === "weekly" ? "Week" : x.label, x.usedPct, Math.round(x.usedPct) + "%" + (x.resetAt ? " · " + esc(x.resetAt - Date.now() < 864e5 ? fmtTime(x.resetAt) : fmtWhen(x.resetAt)) : ""), col, s.chatgpt.cutoverAtPct)
+      cap += paceNotes("openai")
       if (!w.length) cap = '<div class="note">Signed in with ChatGPT. Window figures appear after its first response.</div>'
     } else if (main && main.utilization != null) {
       cap = gauge("Rate limit", main.utilization, Math.round(main.utilization) + "%", col)

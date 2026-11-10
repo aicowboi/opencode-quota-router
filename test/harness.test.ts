@@ -693,3 +693,62 @@ test("agent chains: an agent's sessions use its chain until the user picks a mod
   for (const id of [sid, "ses_agent_build", "ses_agent_child"]) core.sessions.delete(id)
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
 })
+
+test("pace guard: a subagent leaves a plan that is on pace to run out, and the main session stays", async () => {
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  const now = Date.now()
+  const H = 3_600_000
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  const usage = (pct: number) => ({ windows: [{ pool: "claude-agent", label: "5-hour session", utilization: pct, resetAt: now + 3 * H }] })
+  core.store.run("DELETE FROM usage_snapshots")
+  for (const [ago, pct] of [[50, 40], [30, 50], [1, 60]]) core.store.run("INSERT INTO usage_snapshots (at, provider, data) VALUES (?, 'claude-agent', ?)", now - ago * 60_000, JSON.stringify(usage(pct)))
+  const before = core.claude
+  core.claude = { at: now, ok: true, data: usage(60) }
+  ;(core as any).forecastCache = undefined
+  const [f] = core.forecasts()
+  assert.equal(f.label, "Claude 5-hour session")
+  assert.equal(f.beforeReset, true)
+
+  await onEvent(core, evt("session.created", { sessionID: "ses_pace_main", model: opus }))
+  await onEvent(core, evt("session.created", { sessionID: "ses_pace_sub", model: opus, parentID: "ses_pace_main" }))
+  harness.sessionModels.set("ses_pace_main", opus)
+  harness.sessionModels.set("ses_pace_sub", opus)
+  const count = harness.calls.switches.length
+  // Off by default: nothing moves.
+  await onPrompt(core, { sessionID: "ses_pace_sub" })
+  await flush()
+  assert.equal(harness.calls.switches.length, count)
+
+  assert.deepEqual(core.setSetting("pace.enabled", true), { ok: true })
+  await onPrompt(core, { sessionID: "ses_pace_main" })
+  await onPrompt(core, { sessionID: "ses_pace_sub" })
+  await flush()
+  assert.equal(harness.calls.switches.length, count + 1)
+  assert.equal(harness.calls.switches.at(-1).sessionID, "ses_pace_sub")
+  assert.equal(harness.calls.switches.at(-1).model.providerID, "xai")
+  const row: any = core.store.get("SELECT trigger, evidence FROM routing WHERE session_id = 'ses_pace_sub' ORDER BY rowid DESC LIMIT 1")
+  assert.equal(row.trigger, "preempt")
+  assert.match(row.evidence, /5-hour session on pace to run out/)
+
+  // An agent listed as light is treated the same way.
+  assert.deepEqual(core.setSetting("pace.lightAgents", ["explore"]), { ok: true })
+  const main = core.session("ses_pace_main")
+  main.agent = "explore"
+  assert.equal(core.isLight(main), true)
+  main.agent = undefined
+
+  const state = (await import("../src/dashboard/server.ts")).buildState(core)
+  assert.equal(state.forecasts.length, 1)
+  assert.equal(state.pace.enabled, true)
+  const { runDoctor } = await import("../src/doctor.ts")
+  const checks = runDoctor(core)
+  assert.ok(checks.some((c: any) => c.id === "pace" && c.status === "warn"))
+  assert.ok(checks.some((c: any) => c.id === "pace-claude-5-hour-session" && c.status === "info"))
+
+  core.setSetting("pace", undefined)
+  core.claude = before
+  core.store.run("DELETE FROM usage_snapshots")
+  ;(core as any).forecastCache = undefined
+  for (const id of ["ses_pace_main", "ses_pace_sub"]) core.sessions.delete(id)
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+})

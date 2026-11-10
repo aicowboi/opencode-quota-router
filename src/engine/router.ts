@@ -80,6 +80,7 @@ export function route(input: {
   const order = [...chain.keys()]
   const skipped: string[] = []
   let trial: { target: ModelRef; index: number } | undefined
+  let reluctant: { target: ModelRef; index: number; usable: "yes" | "trial"; line: string } | undefined
   let next: { target: ModelRef; at: number } | undefined
 
   for (const index of order) {
@@ -105,7 +106,7 @@ export function route(input: {
       continue
     }
     const block = input.gate?.(entry)
-    if (block) {
+    if (block && !block.soft) {
       skipped.push(`${label}: ${block.reason}`)
       continue
     }
@@ -120,9 +121,17 @@ export function route(input: {
       if (at > 0 && (!next || at < next.at)) next = { target, at }
       continue
     }
+    // A soft block ranks the entry below every other entry that can run, but above waiting.
+    if (block) {
+      const line = `${label}: ${block.reason}`
+      skipped.push(line)
+      reluctant ??= { target, index, usable, line }
+      continue
+    }
     if (usable === "yes" || input.mode === "turn") return { target, index, usable, skipped }
     trial ??= { target, index }
   }
   if (trial) return { ...trial, usable: "trial", skipped }
+  if (reluctant) return { target: reluctant.target, index: reluctant.index, usable: reluctant.usable, skipped: skipped.filter((line) => line !== reluctant.line) }
   return { target: undefined, earliest: next?.at, next: next?.target, skipped }
 }

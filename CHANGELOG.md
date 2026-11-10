@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
+- Forecasts: the dashboard and `/router doctor` say when a Claude, ChatGPT or Copilot window is on pace to run out before it resets.
+- Pace guard (`pace`): subagents, and agents you list, pass over a plan that is on pace to run out, keeping what is left for the main session. Off by default.
 - Chains per agent (`agents`): `"agents": { "plan": "sonnet" }` or `/router agent plan sonnet` runs an agent's sessions on a chain of your choice.
 - Save for later: `/router save <provider> 2h` (or "Save for 2 hours" on the dashboard) sets a provider aside until a time, so routing passes it over and its allowance is kept for when you want it.
 - Dry run: `/router dry-run on` records what routing would do, as "Would: …" rows in the routing log, without moving a session or changing a retry.

@@ -15,6 +15,7 @@ import { applyDiscovery, suggest, withAdditions, type ConnectionMethod } from ".
 import type { CodexWindow } from "./engine/headers.ts"
 import { Recorder } from "./recorder.ts"
 import { Telemetry } from "./telemetry/exporter.ts"
+import { forecast, paceGate, type WindowForecast } from "./engine/forecast.ts"
 import { nextMonthUtc } from "./engine/resets.ts"
 import { findInChains, orderedChain, type Preferred } from "./engine/router.ts"
 import type { ModelInfo, ModelRef, PoolState, Signal, Tokens } from "./engine/types.ts"
@@ -213,7 +214,72 @@ export class Core {
   }
 
   /** Routing policies beyond pool health. Each feature adds its own; the router asks them in order. */
-  policies: Array<(s?: SessionState) => Gate | undefined> = [() => spendGate(this.config, this.spend(), Date.now()), () => saveGate(this.saved(), Date.now())]
+  policies: Array<(s?: SessionState) => Gate | undefined> = [
+    () => spendGate(this.config, this.spend(), Date.now()),
+    () => saveGate(this.saved(), Date.now()),
+    (s) => (this.config.pace.enabled && s && this.isLight(s) ? paceGate(this.config, this.forecasts(), true, Date.now()) : undefined),
+  ]
+
+  /** Light work for the pace guard: a subagent's session, or a session run by one of the agents listed. */
+  isLight(s: SessionState) {
+    return Boolean(s.parentID) || (s.agent !== undefined && this.config.pace.lightAgents.includes(s.agent))
+  }
+
+  private forecastCache?: { at: number; list: WindowForecast[] }
+
+  /** Where each plan window is heading at its recent pace, from the usage figures the checks have recorded. */
+  forecasts(now = Date.now()): WindowForecast[] {
+    if (this.forecastCache && now - this.forecastCache.at < 30_000 && now >= this.forecastCache.at) return this.forecastCache.list
+    const DAY = 86_400_000
+    const windows: Array<{ providerID: string; pool: string; label: string; pct: number; limitPct: number; resetAt?: number; windowMs: number; read: (data: any) => number | undefined }> = []
+    const claude = this.config.claude
+    for (const w of this.claude.data?.windows ?? [])
+      windows.push({
+        providerID: "claude-agent", pool: w.pool, label: `Claude ${w.label}`, pct: w.utilization, resetAt: w.resetAt,
+        limitPct: claude.avoidUsageCredits ? claude.cutoverAtPct : 100,
+        windowMs: /5-hour/.test(w.label) ? 5 * 3_600_000 : 7 * DAY,
+        read: (d) => d?.windows?.find((x: any) => x?.label === w.label)?.utilization,
+      })
+    const q = this.copilot.data
+    if (q && q.entitlement > 0 && !q.unlimited)
+      windows.push({
+        providerID: "github-copilot", pool: "github-copilot", label: "Copilot monthly allowance", pct: (q.used / q.entitlement) * 100, resetAt: q.resetAt,
+        limitPct: 100 - this.config.copilot.reserveFraction * 100,
+        windowMs: 30 * DAY,
+        read: (d) => (d?.entitlement > 0 ? (d.used / d.entitlement) * 100 : undefined),
+      })
+    if (this.chatgptActive())
+      for (const w of this.chatgpt.data?.windows ?? [])
+        windows.push({
+          providerID: "openai", pool: "openai", label: `ChatGPT ${w.label}`, pct: w.usedPct, resetAt: w.resetAt,
+          limitPct: this.config.chatgpt.cutoverAtPct,
+          windowMs: (w.windowMinutes ?? (w.label === "weekly" ? 7 * 1440 : 300)) * 60_000,
+          read: (d) => d?.windows?.find((x: any) => x?.label === w.label)?.usedPct,
+        })
+    const list: WindowForecast[] = []
+    const rows = new Map<string, Array<{ at: number; data: unknown }>>()
+    for (const w of windows) {
+      let history = rows.get(w.providerID)
+      if (!history) {
+        history = this.store.all<{ at: number; data: string }>("SELECT at, data FROM usage_snapshots WHERE provider = ? AND at >= ? ORDER BY at", w.providerID, now - 3 * DAY).flatMap((r) => {
+          try {
+            return [{ at: r.at, data: JSON.parse(r.data) }]
+          } catch {
+            return []
+          }
+        })
+        rows.set(w.providerID, history)
+      }
+      const samples = history.flatMap((r) => {
+        const pct = w.read(r.data)
+        return typeof pct === "number" ? [{ at: r.at, pct }] : []
+      })
+      const f = forecast(samples, { resetAt: w.resetAt, windowMs: w.windowMs, limitPct: w.limitPct, now })
+      if (f) list.push({ ...f, providerID: w.providerID, pool: w.pool, label: w.label, pct: w.pct, limitPct: w.limitPct, resetAt: w.resetAt })
+    }
+    this.forecastCache = { at: now, list }
+    return list
+  }
 
   /** Providers set aside for later, and until when. Kept in the database, so a restart does not forget them. */
   saved(now = Date.now()): Saved {

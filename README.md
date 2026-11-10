@@ -172,6 +172,8 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 
 **Want an agent on a cheaper chain?** `"agents": { "plan": "sonnet" }` (or `/router agent plan sonnet`) runs every session of the `plan` agent on the `sonnet` chain: the session moves to that chain's first available entry when it starts, and falls back along that chain. Picking a model yourself in a session outranks the rule for that session, until you select the agent again. This applies to the agent a session runs as. Subagents run on their parent session's model, and compaction and session titles run on the session's model; OpenCode does not let a plugin change those yet.
 
+**Want subagents to stop draining a plan that is running low?** With a usage check on, the dashboard says when a plan window is on pace to run out before it resets, for example "5-hour session on pace to run out at 15:40 · resets 17:00". The pace is measured over the recent part of the window (the last hour of a 5-hour window, about a day and a half of a weekly one). Turn on the pace guard with `/router pace on` or `"pace": { "enabled": true }`, and subagent sessions, plus any agents you list in `pace.lightAgents`, are routed to the next provider in their chain while that forecast stands, so what is left of the plan goes to your main session. It is a preference, not a rule: if nothing else in the chain can run, the subagent still uses the plan.
+
 **Want to keep a plan for later?** `/router save claude 2h` sets the Claude subscription aside for two hours, so what is left of its allowance is there for the work you want it for. Routing passes a saved provider over as if it were limited: sessions on it move to the next entry in their chain at their next turn, and return when the time is up or when you run `/router save claude off`. The dashboard has the same control on each subscription ("Save for 2 hours" and "Use now"). A saved provider stays saved across restarts. If every other entry in a chain is limited, the session waits; it does not fall back onto the provider you saved.
 
 ## Dashboard and menu bar
@@ -207,6 +209,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 | `/router dry-run on` / `off` | Record what routing would do without moving any session |
 | `/router save <provider> [2h]` | Set a provider aside for later: routing passes it over for `90m`, `2h`, `1d` or until a time such as `17:00` (two hours if left out, a week at most). `/router save <provider> off` ends it, `/router save off` ends all, `/router save` lists them |
 | `/router agent <name> <chain>` | Run one agent's sessions on a chain, for example `/router agent plan sonnet`. `/router agent <name> off` ends it, `/router agent` lists them |
+| `/router pace on` / `off` | Turn the pace guard on or off: subagents pass over a plan that is on pace to run out before it resets |
 | `/router doctor` | Run the health check and open it on the dashboard |
 | `/router telemetry on` / `off` | Turn the OpenTelemetry export on or off (the endpoint comes from `opencode.jsonc` or `OTEL_*`) |
 
@@ -233,6 +236,8 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `copilot.usageProbe` | false | Check Copilot's monthly allowance (see step 4) |
 | `copilot.avoidAdditionalCredits` / `reserveFraction` | true / 0.01 | Leave Copilot before paid credits beyond the allowance |
 | `copilot.monthlyCredits` | 0 (plan default) | Your included credits on a pooled Business or Enterprise seat |
+| `pace.enabled` | false | Pace guard: subagents pass over a plan that is on pace to run out before it resets. Needs a usage check (step 4) or a ChatGPT sign-in |
+| `pace.lightAgents` | none | Agents whose sessions are treated like subagents by the pace guard, for example `["explore"]` |
 | `spend.dailyUsd` / `monthlyUsd` | 0 (no cap) | Most that pay-per-use providers may cost in a local day or month, in US dollars |
 | `spend.providers.<id>.dailyUsd` / `monthlyUsd` | 0 (no cap) | The same, for one provider |
 | `headers.observe` | anthropic, github-copilot | Providers whose rate-limit headers are read. Adding `openai` or `xai` turns off their WebSocket transport. |

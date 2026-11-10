@@ -36,6 +36,11 @@ export type Config = {
   billing: { probeAfterMs: number }
   onExhausted: { mode: "wait" | "fail"; maxWaitMs: number }
   contextFit: { safetyFactor: number }
+  /**
+   * Pace guard: subagents, and the agents listed, pass over a plan that is on pace to run out before it resets.
+   * Needs the usage checks, which is where the pace comes from.
+   */
+  pace: { enabled: boolean; lightAgents: string[] }
   claude: {
     usageProbe: boolean
     /** Cut over before a window is spent, so usage credits are never drawn. */
@@ -158,6 +163,7 @@ export const DEFAULTS: Config = {
   billing: { probeAfterMs: 6 * HOUR },
   onExhausted: { mode: "wait", maxWaitMs: 30 * 60_000 },
   contextFit: { safetyFactor: 1.15 },
+  pace: { enabled: false, lightAgents: [] },
   claude: { usageProbe: false, avoidUsageCredits: true, cutoverAtPct: 98, warnAtPct: 85 },
   copilot: { usageProbe: false, avoidAdditionalCredits: true, reserveFraction: 0.01, monthlyCredits: 0 },
   probes: { activeIntervalMs: 3 * 60_000, idleIntervalMs: 15 * 60_000, maxAgeAtTurnMs: 60_000 },
