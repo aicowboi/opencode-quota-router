@@ -33,6 +33,8 @@ export type SessionState = {
   resumes: number[]
   deferred?: { at: number; executionEventID: string }
   parentID?: string
+  /** Dry run: the last move suggested at a turn, so the same suggestion is not recorded again every turn. */
+  dryLast?: string
   /** Set while the session runs on a fallback; cleared when it returns or the user picks a model. */
   fallback?: { from: ModelRef; reason?: string; at: number }
 }
@@ -353,19 +355,28 @@ export class Core {
 
   recordRouting(r: { sessionID?: string; trigger: string; kind?: string; from?: ModelRef; to?: ModelRef; signal?: Signal; until?: number; evidence?: string }) {
     const at = Date.now()
+    // In a dry run every decision is recorded as one that was not applied. The user's own switches are always real.
+    const dry = this.config.dryRun && r.trigger !== "manual"
     this.store.run(
-      "INSERT INTO routing (at, session_id, trigger, kind, from_model, to_model, pool, until, evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO routing (at, session_id, trigger, kind, from_model, to_model, pool, until, evidence, dry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       at, r.sessionID, r.trigger, r.kind ?? r.signal?.kind, r.from && refLabel(r.from), r.to && refLabel(r.to), r.signal?.pools.join(","),
-      r.until ?? r.signal?.resetAt, r.evidence ?? r.signal?.evidence,
+      r.until ?? r.signal?.resetAt, r.evidence ?? r.signal?.evidence, dry,
     )
     if (r.sessionID) markDirty(this.store, r.sessionID, undefined)
-    this.log.info("route", { sessionID: r.sessionID, trigger: r.trigger, from: r.from && refLabel(r.from), to: r.to && refLabel(r.to), evidence: r.evidence ?? r.signal?.evidence })
+    this.log.info("route", { sessionID: r.sessionID, trigger: r.trigger, ...(dry ? { dry } : {}), from: r.from && refLabel(r.from), to: r.to && refLabel(r.to), evidence: r.evidence ?? r.signal?.evidence })
     this.notify("routing")
   }
 
-  /** Switch a session's model, remembering that the switch was ours so it is not read as a manual change. */
-  async switchTo(s: SessionState, target: ModelRef, trigger: string, signal?: Signal, evidence?: string) {
+  /**
+   * Switch a session's model, remembering that the switch was ours so it is not read as a manual change.
+   * Returns false in a dry run, where the switch is recorded but not made.
+   */
+  async switchTo(s: SessionState, target: ModelRef, trigger: string, signal?: Signal, evidence?: string): Promise<boolean> {
     const from = s.current
+    if (this.config.dryRun) {
+      this.recordRouting({ sessionID: s.id, trigger, from, to: target, signal, evidence })
+      return false
+    }
     s.pending.push({ model: target, at: Date.now() })
     s.pending = s.pending.filter((p) => Date.now() - p.at < 120_000)
     await this.ctx.session.switchModel({ sessionID: s.id, model: target })
@@ -374,6 +385,7 @@ export class Core {
       if (!s.fallback && from) s.fallback = { from, reason: evidence ?? signal?.evidence, at: Date.now() }
     } else s.fallback = undefined
     this.recordRouting({ sessionID: s.id, trigger, from, to: target, signal, evidence })
+    return true
   }
 
   // ---------- usage probes ----------

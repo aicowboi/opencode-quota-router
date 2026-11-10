@@ -99,7 +99,7 @@ const guard =
 
 function statusText(core: Core, sessionID: string): string {
   const s = core.sessions.get(sessionID)
-  const lines = [`quota-router ${VERSION}${core.paused ? " (paused)" : ""}`]
+  const lines = [`quota-router ${VERSION}${core.paused ? " (paused)" : ""}${core.config.dryRun ? " (dry run)" : ""}`]
   if (core.dashboardURL) lines.push(`Dashboard: ${core.dashboardURL}`)
   if (s?.preferred) {
     lines.push(`This session: ${s.current ? refLabel(s.current) : "?"} (preferred ${refLabel(s.preferred.model)}, chain ${s.preferred.chain}${s.pinned ? ", pinned" : ""})`)
@@ -147,7 +147,7 @@ export default {
     await ctx.command.transform((editor: any) => {
       editor.add({
         name: "router",
-        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume",
+        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off",
         execute: async (input: { sessionID: string; prompt: { text?: string } }) => {
           const { sessionID, prompt } = input
           core.log.info("command", { sessionID, text: prompt?.text })
@@ -177,6 +177,12 @@ export default {
               core.paused = false
               text = "Routing resumed."
               break
+            case "dry-run": {
+              const on = arg !== "off"
+              const r = core.setSetting("dryRun", on)
+              text = !r.ok ? r.error : on ? "Dry run is on: routing decisions are recorded on the dashboard, and no session is moved." : "Dry run is off: routing is live again."
+              break
+            }
             default:
               // status / dashboard: open the dashboard. A queued note would only appear on the next turn.
               if (core.dashboardURL) return openURL(core.dashboardURL)

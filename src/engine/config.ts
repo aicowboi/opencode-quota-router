@@ -15,6 +15,8 @@ export type ProviderConfig = {
 
 export type Config = {
   enabled: boolean
+  /** Record what routing would do without changing any session's model or retry. For trying the plugin out safely. */
+  dryRun: boolean
   /** Providers the user configured explicitly; discovery never re-ranks these. */
   explicitProviders: string[]
   /** Rank and include every connected provider, not only configured ones. */
@@ -98,6 +100,7 @@ export const DEFAULT_CHAINS: Record<string, string[]> = {
 
 export const DEFAULTS: Config = {
   enabled: true,
+  dryRun: false,
   explicitProviders: [],
   discovery: { enabled: true },
   chatgpt: { cutoverAtPct: 98, warnAtPct: 85 },

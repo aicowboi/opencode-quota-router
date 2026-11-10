@@ -143,6 +143,13 @@ export class Store {
         this.driver.exec("VACUUM")
       }
     }
+    if (version < 3) {
+      this.transaction(() => {
+        // Dry-run rows: what routing would have done. Kept out of fallback counts.
+        this.addColumn("routing", "dry", "INTEGER NOT NULL DEFAULT 0")
+        this.setMeta("schema_version", "3")
+      })
+    }
   }
 
   private stmt(sql: string): Statement {

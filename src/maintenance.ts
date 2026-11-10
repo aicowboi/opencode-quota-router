@@ -62,7 +62,7 @@ export function refreshSessions(store: Store, batch = 500): number {
       list,
     )
     store.run(
-      `UPDATE sessions SET fallbacks = (SELECT COUNT(*) FROM routing r WHERE r.session_id = sessions.id AND r.trigger IN ('failover', 'resume', 'wait', 'deferred')),
+      `UPDATE sessions SET fallbacks = (SELECT COUNT(*) FROM routing r WHERE r.session_id = sessions.id AND r.trigger IN ('failover', 'resume', 'wait', 'deferred') AND r.dry = 0),
          busy_ms = (SELECT COALESCE(SUM(COALESCE(e.ended_at, e.started_at) - e.started_at), 0) FROM executions e WHERE e.session_id = sessions.id),
          dirty = 0
        WHERE id IN (SELECT value FROM json_each(?))`,

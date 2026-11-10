@@ -22,6 +22,13 @@ type RetryEvent = {
  * in place; anything longer moves the request to the next provider, and OpenCode re-runs it on the new model.
  */
 export async function onRetry(core: Core, e: RetryEvent) {
+  const decision = e.decision
+  await decideRetry(core, e)
+  // Dry run: the decision is recorded, and OpenCode's own retry is left as it was.
+  if (core.config.dryRun) e.decision = decision
+}
+
+async function decideRetry(core: Core, e: RetryEvent) {
   if (!core.config.enabled || core.paused) return
   const now = Date.now()
   const s = core.session(e.sessionID)
@@ -39,6 +46,7 @@ export async function onRetry(core: Core, e: RetryEvent) {
   }
 
   s.lastRetry = { attempt: e.attempt, from: fromKey, at: now }
+  s.dryLast = undefined
   core.pools.report(signal)
   if (!s.preferred && !s.pinned) await core.initSession(s)
   s.current ??= e.model
@@ -96,6 +104,11 @@ export async function onPrompt(core: Core, e: { sessionID: string; metadata?: Re
       : r.skipped.length
         ? r.skipped.join("; ")
         : undefined
+  if (core.config.dryRun) {
+    const key = `${trigger} ${refLabel(r.target)}`
+    if (s.dryLast === key) return
+    s.dryLast = key
+  }
   await core.switchTo(s, r.target, trigger, undefined, evidence).catch((error) => core.log.error("switch failed", { sessionID: s.id, error: String(error) }))
 }
 
@@ -210,6 +223,7 @@ async function resumeAfterFailure(core: Core, ev: { id: string; data: Record<str
 async function continueOn(core: Core, s: SessionState, target: ModelRef, eventID: string, reason: string) {
   try {
     if (!same(target, s.current)) await core.switchTo(s, target, "resume", undefined, reason)
+    if (core.config.dryRun) return
     s.resumes.push(Date.now())
     await core.ctx.session.synthetic({
       sessionID: s.id,

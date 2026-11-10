@@ -157,6 +157,8 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 3. Send a message, and it appears under **Running now**, then in the totals.
 4. Problems are written to `~/.local/share/opencode-quota-router/router.log`.
 
+**Want to watch before it acts?** Run `/router dry-run on`. Routing decisions are recorded in the dashboard's routing log as "Would: …", and no session is moved and no retry is changed. `/router dry-run off` makes routing live again.
+
 ## How routing works
 
 - **Within a turn.** A failed request is classified as a throttle, overload, window used up, billing problem or auth failure.
@@ -192,6 +194,9 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 | `/router reset <pool or all>` | Clear a provider's limited state |
 | `/router pause` | Pause routing for every session |
 | `/router resume` | Resume routing for every session |
+| `/router dry-run on` / `off` | Record what routing would do without moving any session |
+
+Commands that change a setting store it in the plugin's own database, on top of your `opencode.jsonc`, which is never written to.
 
 ## Configuration reference
 
@@ -199,6 +204,7 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 
 | Option | Default | Meaning |
 |---|---|---|
+| `dryRun` | false | Record routing decisions without applying them |
 | `providers.<id>.priority` | 1–5 as above | Lower is tried first. Chains are sorted by it. |
 | `providers.<id>.allow` | `always` | `never` keeps a provider out of routing |
 | `chains.<name>` | see above | A list of `provider/model#variant` replaces the chain; an object of `provider: model` (or `null`) changes single entries; `null` removes the chain |

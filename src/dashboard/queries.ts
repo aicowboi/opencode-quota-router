@@ -47,7 +47,7 @@ export function summary(store: Store, r: Range) {
   const u = usage(r)
   const totals = store.get<Record<string, number>>(`${u.cte} SELECT ${SUMS} FROM u`, ...u.params) ?? {}
   const sessions = store.get<{ n: number }>("SELECT COUNT(*) AS n FROM sessions WHERE last_at >= ?", r.fromMs)?.n ?? 0
-  const routing = store.all<{ trigger: string; n: number }>("SELECT trigger, COUNT(*) AS n FROM routing WHERE at >= ? GROUP BY trigger", r.fromMs)
+  const routing = store.all<{ trigger: string; n: number }>("SELECT trigger, COUNT(*) AS n FROM routing WHERE at >= ? AND dry = 0 GROUP BY trigger", r.fromMs)
   return {
     ...(totals as { tokens: number; input: number; output: number; reasoning: number; cache_read: number; cache_write: number; equiv: number; actual: number; steps: number; failed: number }),
     modelMs: totals.model_ms ?? 0,
@@ -182,11 +182,15 @@ const TRIGGER_FILTERS: Record<string, string[]> = {
   manual: ["manual"],
 }
 
+/** Dry-run rows read as their own kind of change (`dry:failover`), so they are never mixed with what really happened. */
+const TRIGGER = "CASE WHEN dry = 1 THEN 'dry:' || trigger ELSE trigger END"
+
 export function routingSummary(store: Store, r: Range) {
-  const rows = store.all<{ trigger: string; n: number }>("SELECT trigger, COUNT(*) AS n FROM routing WHERE at >= ? GROUP BY trigger", r.fromMs)
+  const rows = store.all<{ trigger: string; n: number }>(`SELECT ${TRIGGER} AS trigger, COUNT(*) AS n FROM routing WHERE at >= ? GROUP BY 1`, r.fromMs)
   const by = Object.fromEntries(rows.map((x) => [x.trigger, x.n]))
   const count = (k: string) => TRIGGER_FILTERS[k].reduce((s, t) => s + (by[t] ?? 0), 0)
-  return { all: rows.reduce((s, x) => s + x.n, 0), fallback: count("fallback"), return: count("return"), moved: count("moved"), manual: count("manual") }
+  const dry = rows.filter((x) => x.trigger.startsWith("dry:")).reduce((s, x) => s + x.n, 0)
+  return { all: rows.reduce((s, x) => s + x.n, 0), fallback: count("fallback"), return: count("return"), moved: count("moved"), manual: count("manual"), dry }
 }
 
 /** One row per day with counts of each kind of change, newest first, paginated by day. */
@@ -195,7 +199,7 @@ export function routingDays(store: Store, r: Range, opts: { filter?: string; bef
   const t = triggerWhere(opts.filter)
   const day = "strftime('%Y-%m-%d', at / 1000, 'unixepoch', 'localtime')"
   const rows = store.all<{ day: string; trigger: string; n: number; sessions: number }>(
-    `SELECT ${day} AS day, trigger, COUNT(*) AS n, COUNT(DISTINCT session_id) AS sessions FROM routing
+    `SELECT ${day} AS day, ${TRIGGER} AS trigger, COUNT(*) AS n, COUNT(DISTINCT session_id) AS sessions FROM routing
      WHERE at >= ?${t.sql} ${opts.before ? `AND ${day} < ?` : ""} GROUP BY 1, 2 ORDER BY 1 DESC`,
     r.fromMs,
     ...t.params,
@@ -216,8 +220,9 @@ export function routingDays(store: Store, r: Range, opts: { filter?: string; bef
 }
 
 const triggerWhere = (filter?: string) => {
+  if (filter === "dry") return { sql: " AND dry = 1", params: [] as unknown[] }
   const list = filter ? TRIGGER_FILTERS[filter] : undefined
-  return list ? { sql: ` AND trigger IN (${list.map(() => "?").join(", ")})`, params: [...list] as unknown[] } : { sql: "", params: [] as unknown[] }
+  return list ? { sql: ` AND dry = 0 AND trigger IN (${list.map(() => "?").join(", ")})`, params: [...list] as unknown[] } : { sql: "", params: [] as unknown[] }
 }
 
 /**
@@ -234,7 +239,7 @@ export function routingGroups(store: Store, r: Range, opts: { filter?: string; b
     t.params = [...t.params, start, start + 25 * 3_600_000, opts.day]
   }
   const groups = store.all<Record<string, any>>(
-    `SELECT strftime('%Y-%m-%d', at / 1000, 'unixepoch', 'localtime') AS day, trigger, COALESCE(from_model, '') AS from_model,
+    `SELECT strftime('%Y-%m-%d', at / 1000, 'unixepoch', 'localtime') AS day, ${TRIGGER} AS trigger, COALESCE(from_model, '') AS from_model,
        COALESCE(to_model, '') AS to_model, COUNT(*) AS n, COUNT(DISTINCT session_id) AS sessions, MIN(at) AS first_at, MAX(at) AS last_at,
        MAX(id) AS last_id, MAX(until) AS until
      FROM routing WHERE at >= ?${t.sql} GROUP BY 1, 2, 3, 4 ${opts.before ? "HAVING MAX(at) < ?" : ""} ORDER BY last_at DESC LIMIT ?`,
@@ -264,7 +269,7 @@ export function routingEvents(store: Store, q: { day: string; trigger: string; f
   const end = start + 86_400_000 + 3_600_000 // daylight-saving days can be 25 hours
   const rows = store.all<Record<string, any>>(
     `SELECT r.id, r.at, r.session_id, r.evidence, r.until, r.pool, se.title FROM routing r LEFT JOIN sessions se ON se.id = r.session_id
-     WHERE r.at >= ? AND r.at < ? AND r.trigger = ? AND COALESCE(r.from_model, '') = ? AND COALESCE(r.to_model, '') = ?
+     WHERE r.at >= ? AND r.at < ? AND ${TRIGGER} = ? AND COALESCE(r.from_model, '') = ? AND COALESCE(r.to_model, '') = ?
        AND strftime('%Y-%m-%d', r.at / 1000, 'unixepoch', 'localtime') = ? ${q.beforeId ? "AND r.id < ?" : ""}
      ORDER BY r.id DESC LIMIT ?`,
     start,

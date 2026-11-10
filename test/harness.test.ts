@@ -236,7 +236,7 @@ test("store: rollups match raw rows, pagination and retention", async () => {
   const { Store, localDay } = await import("../src/db.ts")
   const m = await import("../src/maintenance.ts")
   const store = await Store.open(path.join(tmp, "big.db"))
-  assert.equal(store.meta("schema_version"), "2")
+  assert.equal(store.meta("schema_version"), "3")
   assert.equal(Number((store.get("PRAGMA auto_vacuum") as any).auto_vacuum), 2, "incremental auto-vacuum")
   const now = Date.now()
   const DAY = 86_400_000
@@ -361,4 +361,55 @@ test("settings changed at runtime are stored, applied over the options, and can 
   assert.deepEqual(core.setSetting("claude.warnAtPct", undefined), { ok: true })
   assert.equal(core.config.claude.warnAtPct, 85)
   assert.equal(core.store.meta("settings"), "{}")
+})
+
+test("dry run records what routing would do and changes nothing", async () => {
+  const sid = "ses_dry"
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  harness.sessionModels.set(sid, opus)
+  await onEvent(core, evt("session.created", { sessionID: sid, model: opus }))
+  assert.deepEqual(core.setSetting("dryRun", true), { ok: true })
+  const switches = harness.calls.switches.length
+  const synthetic = harness.calls.synthetic.length
+  const e: any = {
+    sessionID: sid,
+    model: opus,
+    error: { type: "provider.unknown", message: `Claude Code subscription limit reached (five hour). Resets at ${new Date(Date.now() + 3_600_000).toISOString()}.` },
+    attempt: 2,
+    decision: { retry: false },
+  }
+  await onRetry(core, e)
+  // OpenCode's own decision stands, no model was switched, and the limit was still learned.
+  assert.deepEqual(e.decision, { retry: false })
+  assert.equal(harness.calls.switches.length, switches)
+  assert.deepEqual(core.sessions.get(sid).current, opus)
+  assert.equal(core.pools.get("claude-agent").status, "cooling")
+  // The next turns would move early; the suggestion is recorded once, not on every turn.
+  await onPrompt(core, { sessionID: sid })
+  await onPrompt(core, { sessionID: sid })
+  await onEvent(core, evt("session.execution.failed", { sessionID: sid, error: e.error }))
+  await flush()
+  assert.equal(harness.calls.switches.length, switches)
+  assert.equal(harness.calls.synthetic.length, synthetic)
+  const rows: any[] = core.store.all("SELECT trigger, to_model, dry FROM routing WHERE session_id = ? ORDER BY id", sid)
+  assert.deepEqual(rows.map((r) => `${r.trigger}:${r.dry}`), ["failover:1", "preempt:1", "resume:1"])
+  assert.equal(rows[0].to_model, "xai/grok-4.7#high")
+
+  // Dry rows are their own kind on the dashboard and never count as fallbacks.
+  const all = q.resolveRange("all")
+  const before = q.routingSummary(core.store, all)
+  assert.equal(before.dry >= 3, true)
+  assert.equal(q.summary(core.store, all).routing.preempt ?? 0, core.store.get("SELECT COUNT(*) AS n FROM routing WHERE trigger = 'preempt' AND dry = 0").n)
+  const groups = q.routingGroups(core.store, all, { filter: "dry" }).groups
+  assert.ok(groups.length >= 3 && groups.every((g: any) => g.trigger.startsWith("dry:")))
+  assert.ok(q.routingGroups(core.store, all, { filter: "fallback" }).groups.every((g: any) => !g.trigger.startsWith("dry:")))
+  const g = groups[0]
+  assert.ok(q.routingEvents(core.store, { day: g.day, trigger: g.trigger, from: g.from_model, to: g.to_model }).rows.length >= 1)
+  core.maintain()
+  assert.equal(core.store.get("SELECT fallbacks FROM sessions WHERE id = ?", sid)?.fallbacks ?? 0, 0)
+
+  core.setSetting("dryRun", undefined)
+  assert.equal(core.config.dryRun, false)
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
 })

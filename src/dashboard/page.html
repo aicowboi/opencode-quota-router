@@ -339,6 +339,7 @@ function renderMast() {
   const topLimited = top && limitedPool(top)
   const nextFree = connected.find((p) => !limitedPool(p))
   const parts = []
+  if (s.dryRun) parts.push("<b>Dry run.</b> Routing decisions are recorded below but no session is moved.")
   if (s.paused) parts.push("<b>Routing is paused.</b> Sessions stay on whatever model they are on.")
   else if (topLimited) parts.push("<b>" + esc(pname(top.id)) + "</b> is limited until " + esc(fmtWhen(topLimited.until)) + (nextFree ? ", so requests go to <b>" + esc(pname(nextFree.id)) + "</b>." : ", and so is everything below it."))
   const servers = Object.entries(serving)
@@ -357,13 +358,14 @@ function renderMast() {
 
 function renderMenu() {
   const m = $("menu")
-  m.innerHTML = '<button data-a="probe">Check usage now</button><button data-a="pause">' + (state && state.paused ? "Resume routing" : "Pause routing") + "</button><hr>" +
+  m.innerHTML = '<button data-a="probe">Check usage now</button><button data-a="pause">' + (state && state.paused ? "Resume routing" : "Pause routing") + '</button><button data-a="dry">' + (state && state.dryRun ? "End dry run" : "Start a dry run") + "</button><hr>" +
     '<div class="label">Export as CSV (' + esc(RANGE_TEXT[range]) + ")</div>" +
     [["steps", "Requests"], ["sessions", "Sessions"], ["daily", "Daily totals"], ["routing", "Routing changes"], ["executions", "Executions"]]
       .map(([t, l]) => '<a href="/api/export.csv?table=' + t + "&range=" + range + '">' + l + "</a>").join("")
   for (const b of m.querySelectorAll("button")) b.onclick = async () => {
     closeMenu()
     if (b.dataset.a === "probe") await act({ action: "probe" })
+    else if (b.dataset.a === "dry") await act({ action: "dry-run", on: !(state && state.dryRun) })
     else await act({ action: state && state.paused ? "resume" : "pause" })
   }
 }
@@ -496,13 +498,16 @@ const KIND = {
   failover: ["Fallback", "st-warn"], recovery: ["Returned", "st-ok"], preempt: ["Moved early", "st-info"], route: ["Routed", "st-info"],
   resume: ["Continued", "st-warn"], wait: ["Waiting", "st-bad"], deferred: ["Scheduled", "st-bad"], exhausted: ["All limited", "st-bad"], manual: ["You switched", "soft"], "gave-up": ["Stopped", "st-bad"],
 }
+// A dry-run row shows the same label as the real change, marked as not applied.
+const kindOf = (t) => { const dry = String(t).startsWith("dry:"), k = KIND[dry ? t.slice(4) : t] || [t, ""]; return dry ? ["Would: " + k[0].toLowerCase(), "soft"] : k }
 const FILTERS = [["", "All", "all"], ["fallback", "Fallbacks", "fallback"], ["return", "Returns", "return"], ["moved", "Moved early", "moved"], ["manual", "You switched", "manual"]]
 let rdays = [], rnext = null
 
 async function loadRouting(reset) {
   if (reset) {
     const sm = await api("/api/routing/summary?range=" + range)
-    segmented($("rfilters"), FILTERS.map(([k, l, c]) => [k, l, sm[c] || 0]), rfilter, (k) => { rfilter = k; loadRouting(true) })
+    if (rfilter === "dry" && !sm.dry) rfilter = ""
+    segmented($("rfilters"), FILTERS.concat(sm.dry ? [["dry", "Dry run", "dry"]] : []).map(([k, l, c]) => [k, l, sm[c] || 0]), rfilter, (k) => { rfilter = k; loadRouting(true) })
     rdays = []; rnext = null
   }
   const page = await api("/api/routing/days?range=" + range + (rfilter ? "&filter=" + rfilter : "") + (rnext && !reset ? "&before=" + rnext : ""))
@@ -517,7 +522,7 @@ function renderRouting() {
   el.innerHTML = rdays.map((d, i) => {
     const key = "rday:" + d.day
     const isOpen = open.has(key)
-    const counts = Object.entries(d.counts).sort((a, b) => b[1] - a[1]).map(([t, k]) => '<span class="' + (KIND[t] || [t, ""])[1] + '"><b>' + k + "</b> " + esc((KIND[t] || [t])[0].toLowerCase()) + "</span>").join("")
+    const counts = Object.entries(d.counts).sort((a, b) => b[1] - a[1]).map(([t, k]) => '<span class="' + kindOf(t)[1] + '"><b>' + k + "</b> " + esc(kindOf(t)[0].toLowerCase()) + "</span>").join("")
     return '<div class="disc" data-day="' + esc(d.day) + '"' + (isOpen ? " open" : "") + '><button class="sum" aria-expanded="' + isOpen + '"><span class="chev">›</span><span style="flex:1">' + esc(dayLabel(d.day)) + '</span><span class="counts">' + counts + '</span></button><div class="body"></div></div>'
   }).join("") + (rnext ? '<button class="more" id="rmore">Earlier days</button>' : "")
   for (const d of el.querySelectorAll(".disc")) {
@@ -538,7 +543,7 @@ async function loadDay(el) {
   const body = el.querySelector(".body")
   const page = await api("/api/routing/groups?range=" + range + "&day=" + el.dataset.day + "&limit=50" + (rfilter ? "&filter=" + rfilter : ""))
   body.innerHTML = page.groups.map((g, i) => {
-    const [label, cls] = KIND[g.trigger] || [g.trigger, ""]
+    const [label, cls] = kindOf(g.trigger)
     const span = g.n > 1 ? fmtTime(g.first_at) + "–" + fmtTime(g.last_at) : fmtTime(g.last_at)
     const change = (g.from_model ? '<span class="model">' + esc(g.from_model) + '</span> <span class="muted">→</span> ' : "") + '<span class="model">' + esc(g.to_model) + "</span>"
     return '<div class="chg" data-i="' + i + '"><span class="kind ' + cls + '">' + esc(label) + "</span><div>" + change +

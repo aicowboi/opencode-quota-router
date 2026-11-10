@@ -2,6 +2,18 @@
 
 All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - Unreleased
+
+### Added
+
+- Dry run: `/router dry-run on` records what routing would do, as "Would: …" rows in the routing log, without moving a session or changing a retry.
+- Settings can be changed while OpenCode runs. They are stored in the plugin's database on top of `opencode.jsonc`, which is never written to.
+- The routing engine has its own entry point, `opencode-quota-router/engine`, with no dependency on OpenCode.
+
+### Changed
+
+- GitHub Actions are pinned to commit SHAs and no longer keep credentials after checkout.
+
 ## [0.1.0] - 2026-11-09
 
 First public release.

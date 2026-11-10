@@ -39,6 +39,7 @@ export function buildMenubar(core: Core) {
   return {
     now,
     paused: core.paused,
+    dryRun: core.config.dryRun,
     url: core.dashboardURL,
     claude: core.claude.data ? { windows: core.claude.data.windows, extra: core.claude.data.extra, at: core.claude.at } : undefined,
     chatgpt: core.chatgptActive() && core.chatgpt.data ? { windows: core.chatgpt.data.windows, at: core.chatgpt.at } : undefined,
@@ -91,6 +92,7 @@ export function buildState(core: Core) {
     started: core.started,
     paused: core.paused,
     enabled: core.config.enabled,
+    dryRun: core.config.dryRun,
     providers,
     claude: { ok: core.claude.ok, at: core.claude.at, message: core.claude.message, data: core.claude.data, enabled: core.config.claude.usageProbe, cutoverAtPct: core.config.claude.cutoverAtPct },
     copilot: { ok: core.copilot.ok, at: core.copilot.at, message: core.copilot.message, data: core.copilot.data, enabled: core.config.copilot.usageProbe, reserveFraction: core.config.copilot.reserveFraction },
@@ -219,6 +221,7 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           if (a.action === "reset-pool" && typeof a.pool === "string") core.pools.reset(a.pool, "dashboard")
           else if (a.action === "pause") core.paused = true
           else if (a.action === "resume") core.paused = false
+          else if (a.action === "dry-run" && typeof a.on === "boolean") core.setSetting("dryRun", a.on)
           else if (a.action === "probe") await Promise.allSettled([core.probeClaude(true), core.probeCopilot(true)])
           else if (["chain-add", "chain-ignore", "chain-remove"].includes(a.action) && typeof a.chain === "string" && typeof a.ref === "string" && core.config.chains[a.chain] && /^[^/\s]+\/[^\s]+$/.test(a.ref))
             core.changeChain(a.action.slice(6) as "add" | "ignore" | "remove", a.chain, a.ref)
