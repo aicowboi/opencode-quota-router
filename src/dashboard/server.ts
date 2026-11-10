@@ -62,7 +62,7 @@ export function buildMenubar(core: Core) {
     url: core.dashboardURL,
     claude: core.claude.data ? { windows: core.claude.data.windows, extra: core.claude.data.extra, at: core.claude.at } : undefined,
     chatgpt: core.chatgptActive() && core.chatgpt.data ? { windows: core.chatgpt.data.windows, at: core.chatgpt.at } : undefined,
-    copilot: core.copilot.data ? { ...core.copilot.data, at: core.copilot.at } : undefined,
+    copilot: core.copilot.data ? { ...core.copilot.data, at: core.copilot.at, estimate: core.copilotEstimate(now, core.copilot.data.entitlement) } : undefined,
     providers,
     live: live.map((e) => {
       const s = core.sessions.get(e.sessionID)
@@ -120,7 +120,7 @@ export function buildState(core: Core) {
     providers,
     plans: { claude: core.hasProvider("claude-agent") ? claudePlan(core.config.claude.plan || core.claude.plan?.type, core.claude.plan?.tier)?.name : undefined },
     claude: { ok: core.claude.ok, at: core.claude.at, message: core.claude.message, data: core.claude.data, enabled: core.config.claude.usageProbe, cutoverAtPct: core.config.claude.cutoverAtPct },
-    copilot: { ok: core.copilot.ok, at: core.copilot.at, message: core.copilot.message, data: core.copilot.data, enabled: core.config.copilot.usageProbe, reserveFraction: core.config.copilot.reserveFraction, economyAtPct: core.config.copilot.economyAtPct, byModel: core.copilot.data ? q.copilotCredits(core.store, Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1)) : [] },
+    copilot: { ok: core.copilot.ok, at: core.copilot.at, message: core.copilot.message, data: core.copilot.data, enabled: core.config.copilot.usageProbe, reserveFraction: core.config.copilot.reserveFraction, economyAtPct: core.config.copilot.economyAtPct, byModel: core.copilot.data ? q.copilotCredits(core.store, Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1)) : [], estimate: core.copilot.data ? core.copilotEstimate(now, core.copilot.data.entitlement) : undefined },
     openrouter: { ok: core.openrouter.ok, at: core.openrouter.at, message: core.openrouter.message, data: core.openrouter.data, enabled: core.config.openrouter.usageProbe },
     chatgpt: { active: core.chatgptActive(), at: core.chatgpt.at, data: core.chatgpt.data, cutoverAtPct: core.config.chatgpt.cutoverAtPct },
     saved: core.saved(now),

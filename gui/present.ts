@@ -10,7 +10,17 @@ export type Menubar = {
   paused: boolean
   url?: string
   claude?: { windows: Array<{ pool: string; label: string; utilization: number; resetAt?: number }>; extra?: { enabled: boolean; used: number; limit?: number; currency?: string } }
-  copilot?: { name: string; plan?: string; entitlement: number; used?: number; remaining: number; overageUsed: number; resetAt?: number }
+  copilot?: {
+    name: string
+    plan?: string
+    entitlement: number
+    used?: number
+    remaining: number
+    overageUsed: number
+    resetAt?: number
+    /** The live estimate from recorded tokens, present when it runs ahead of GitHub's own count. */
+    estimate?: { used: number; basis: string; lagMs: number; lagAtLeast: boolean; reported: { used: number } }
+  }
   providers: Array<{ id: string; priority: number; kind: string; status: string; until?: number; evidence?: string; serving: number; saved?: number }>
   live: Array<{ title: string; project?: string; startedAt: number; model?: string; fallback?: string }>
   today: { tokens: number; equiv: number; actual: number; steps: number }
@@ -78,15 +88,22 @@ export function present(data: Menubar | undefined, cutoverAtPct = 98): View {
   const onFallback = data.live.filter((l) => l.fallback)
 
   // Menu bar text: short enough to sit next to the clock.
+  // Copilot's live estimate, as a fraction of the allowance, when it runs ahead of GitHub's count.
+  const cpEst = data.copilot?.estimate
+  const cpFrac = cpEst && data.copilot && data.copilot.entitlement > 0 && cpEst.used > (data.copilot.used ?? 0) + 1 ? cpEst.used / data.copilot.entitlement : undefined
   let title: string
   let ring: Tone
   if (data.paused) {
     title = "Paused"
     ring = "idle"
   } else if (topLimited) {
+    // Kept short on purpose: macOS hides a status item whose title no longer fits, and this is the long case.
     const now2 = serving.find((p) => p.id !== top.id) ?? data.providers.find((p) => p.status === "available")
-    title = `${now2 ? short(now2.id) : "Limited"} · ${short(top.id)} in ${fmtDur((topLimited.until ?? now) - now)}`
+    title = `${now2 ? short(now2.id) : "Limited"} · ${fmtDur((topLimited.until ?? now) - now)}`
     ring = "bad"
+  } else if (cpFrac !== undefined && cpFrac >= 0.85 && (pct === undefined || cpFrac * 100 >= pct)) {
+    title = `Copilot ${Math.round(cpFrac * 100)}%`
+    ring = cpFrac * 100 >= cutoverAtPct ? "bad" : "warn"
   } else {
     title = pct !== undefined ? `${pct}%` : ""
     ring = pct === undefined ? "idle" : pct >= cutoverAtPct ? "bad" : pct >= 85 ? "warn" : "ok"
@@ -110,14 +127,19 @@ export function present(data: Menubar | undefined, cutoverAtPct = 98): View {
   if (e?.enabled) allowances.push({ label: `Usage credits — ${money(e.used, e.currency)}${e.limit !== undefined ? ` of ${money(e.limit, e.currency)}` : ""}`, sublabel: "Routing moves on before these are drawn", enabled: false })
   const cp = data.copilot
   if (cp) {
-    const used = cp.used ?? cp.entitlement - cp.remaining
+    const reported = cp.used ?? cp.entitlement - cp.remaining
+    const ahead = cp.estimate && cp.estimate.used > reported + 1
+    const used = ahead ? cp.estimate!.used : reported
     const d = new Date(now)
     const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)
     const end = cp.resetAt ?? Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)
     const pace = used / Math.max(0.03, (now - start) / (end - start))
+    const lag = cp.estimate && cp.estimate.lagMs >= 60_000 ? `${Math.round(cp.estimate.lagMs / 60_000)}m` : "under a minute"
     allowances.push({
-      label: `Copilot ${cp.name === "ai_credits" ? "credits" : "requests"} — ${Math.round(used).toLocaleString()} / ${Math.round(cp.entitlement).toLocaleString()}`,
-      sublabel: `${Math.round(Math.max(0, cp.entitlement - used)).toLocaleString()} left · on pace for ${Math.round(pace).toLocaleString()} by ${new Date(end - 1).toLocaleDateString([], { day: "numeric", month: "short" })}`,
+      label: `Copilot ${cp.name === "ai_credits" ? "credits" : "requests"} — ${ahead ? "~" : ""}${Math.round(used).toLocaleString()} / ${Math.round(cp.entitlement).toLocaleString()}`,
+      sublabel: ahead
+        ? `Estimated from tokens · GitHub reports ${Math.round(reported).toLocaleString()}, ${cp.estimate!.lagAtLeast ? "at least " : ""}${lag} behind`
+        : `${Math.round(Math.max(0, cp.entitlement - used)).toLocaleString()} left · on pace for ${Math.round(pace).toLocaleString()} by ${new Date(end - 1).toLocaleDateString([], { day: "numeric", month: "short" })}`,
       enabled: false,
     })
   }
@@ -159,7 +181,7 @@ export function present(data: Menubar | undefined, cutoverAtPct = 98): View {
 
   return {
     title,
-    tooltip: [headline, headSub].filter(Boolean).join(" — "),
+    tooltip: [headline, headSub, cpFrac !== undefined ? `Copilot ~${Math.round(cpEst!.used).toLocaleString()} credits used, GitHub reports ${Math.round(data.copilot?.used ?? 0).toLocaleString()}` : undefined].filter(Boolean).join(" — "),
     fraction: pct !== undefined ? pct / 100 : 0,
     ring,
     dot,

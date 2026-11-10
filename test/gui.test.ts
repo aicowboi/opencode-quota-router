@@ -47,9 +47,25 @@ test("menu bar: limited Claude shows where requests go and when it returns", () 
     ],
     live: [{ title: "Plugin work", startedAt: NOW - 60_000, model: "xai/grok-4.7#high", fallback: "claude-agent/opus#medium" }],
   })
-  assert.equal(v.title, "xAI · Claude in 2h 05m")
+  assert.equal(v.title, "xAI · 2h 05m")
   assert.equal(v.ring, "bad")
   assert.equal(v.dot, "warn")
+})
+
+test("menu bar: Copilot's live estimate shows when GitHub's count is behind", () => {
+  const estimate = { used: 1470, basis: "stale", lagMs: 18 * 60_000, lagAtLeast: true, reported: { used: 540 } }
+  const v = present({ ...base, copilot: { ...base.copilot!, used: 540, estimate } })
+  // Claude's window is the tighter constraint here, so the title stays on it; the estimate is in the menu.
+  assert.equal(v.title, "53%")
+  const item = v.sections.flat().find((i) => i.label.startsWith("Copilot credits"))!
+  assert.equal(item.label, "Copilot credits — ~1,470 / 1,900")
+  assert.match(item.sublabel ?? "", /GitHub reports 540, at least 18m behind/)
+  // When Copilot is the constraint and past the warning line, the title switches to it, and stays short.
+  const high = { ...estimate, used: 1700 }
+  const tight = present({ ...base, claude: { windows: [{ ...base.claude!.windows[0], utilization: 10 }] }, copilot: { ...base.copilot!, used: 540, estimate: high } })
+  assert.equal(tight.title, "Copilot 89%")
+  assert.equal(tight.ring, "warn")
+  assert.match(tight.tooltip, /Copilot ~1,700 credits used/)
 })
 
 test("menu bar: near the cut-over, paused, and offline", () => {

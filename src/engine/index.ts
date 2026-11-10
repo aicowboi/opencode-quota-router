@@ -3,6 +3,7 @@
 // other tools. Import it as `opencode-quota-router/engine`.
 export * from "./types.ts"
 export * from "./classify.ts"
+export * from "./credits.ts"
 export * from "./config.ts"
 export * from "./discovery.ts"
 export * from "./forecast.ts"

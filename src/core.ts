@@ -7,7 +7,8 @@ import { checkSetting, loadConfig, overlay, refKey, refLabel, type Config } from
 import { modelPools } from "./engine/classify.ts"
 import { localDay, Store } from "./db.ts"
 import { dataDir, Logger } from "./log.ts"
-import { composeGates, downGate, economyGate, saveGate, spendBlocks, spendGate, type Gate, type Saved, type Spend } from "./engine/policy.ts"
+import { estimateCopilot } from "./engine/credits.ts"
+import { composeGates, COPILOT_CREDITS_PER_USD, downGate, economyGate, saveGate, spendBlocks, spendGate, type Gate, type Saved, type Spend } from "./engine/policy.ts"
 import { PoolStore } from "./engine/pools.ts"
 import { estimate } from "./engine/pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
@@ -1050,18 +1051,50 @@ export class Core {
     this.notify("usage")
   }
 
+  /**
+   * Copilot credits used right now. GitHub's own count lags real usage by minutes, so this tops it up with the credits
+   * recorded tokens account for since the count last kept up. Undefined until a count has been read.
+   */
+  copilotEstimate(now = Date.now(), entitlement = this.copilot.data?.entitlement ?? 0) {
+    if (!(entitlement > 0)) return undefined
+    const from = now - 35 * 86_400_000
+    const readings = this.store.all<{ at: number; used: number }>(
+      "SELECT at, json_extract(data, '$.used') AS used FROM usage_snapshots WHERE provider = 'github-copilot' AND at >= ? AND json_extract(data, '$.used') IS NOT NULL ORDER BY at",
+      from,
+    )
+    const steps = this.store.all<{ endedAt: number; credits: number; input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number }>(
+      "SELECT ended_at AS endedAt, cost_equiv * ? AS credits, input, output, reasoning, cache_read AS cacheRead, cache_write AS cacheWrite FROM steps WHERE provider_id = 'github-copilot' AND ended_at >= ? ORDER BY ended_at",
+      COPILOT_CREDITS_PER_USD,
+      from,
+    )
+    return estimateCopilot(readings, steps, now, entitlement)
+  }
+
   applyCopilot(q: CopilotQuota, now: number) {
     const cfg = this.config.copilot
+    const estimate = q.name === "ai_credits" ? this.copilotEstimate(now, q.entitlement) : undefined
+    // Whichever is higher: the live estimate while GitHub's count lags, and the count once it catches up.
+    const reported = q.used ?? Math.max(0, q.entitlement - q.remaining)
+    const used = Math.max(reported, estimate?.used ?? 0)
+    const remaining = q.entitlement - used
     const reserve = Math.ceil(q.entitlement * cfg.reserveFraction)
-    const exhausted = cfg.avoidAdditionalCredits ? q.remaining <= reserve || q.overageUsed > 0 : q.remaining <= 0 && !q.overagePermitted
+    // The reserve is a trickle. A session burning credits fast spends it in seconds, so hold back a minute of the
+    // recent burn too, capped so the estimate never moves a session off more than a tenth of the allowance early.
+    const buffer = Math.min(q.entitlement * 0.1, Math.max(reserve, estimate?.burnPerMin ?? 0))
+    const exhausted = cfg.avoidAdditionalCredits ? remaining <= buffer || q.overageUsed > 0 : remaining <= 0 && !q.overagePermitted
+    const ahead = estimate !== undefined && estimate.used > reported + 1
+    const pctLeft = q.entitlement > 0 ? (remaining / q.entitlement) * 100 : 0
+    const noun = q.name === "ai_credits" ? "credits" : "allowance"
     this.pools.usage("github-copilot", {
-      utilization: Math.max(0, Math.min(100, 100 - q.percentRemaining)),
+      utilization: Math.max(0, Math.min(100, 100 - pctLeft)),
       resetAt: q.resetAt ?? nextMonthUtc(now),
       exhausted,
-      warn: q.percentRemaining <= 15,
-      evidence: exhausted
-        ? `Included Copilot ${q.name === "ai_credits" ? "credits" : "allowance"} used (${Math.round(q.remaining)} of ${q.entitlement} left${q.overageUsed ? `, ${Math.round(q.overageUsed)} beyond` : ""})`
-        : `Copilot ${q.name === "ai_credits" ? "credits" : "allowance"} ${Math.round(q.percentRemaining)}% left`,
+      warn: pctLeft <= 15,
+      evidence: ahead
+        ? `About ${Math.round(used).toLocaleString("en-US")} of ${Math.round(q.entitlement).toLocaleString("en-US")} Copilot ${noun} used, estimated from tokens; GitHub reports ${Math.round(reported).toLocaleString("en-US")}`
+        : exhausted
+          ? `Included Copilot ${noun} used (${Math.round(Math.max(0, q.remaining))} of ${Math.round(q.entitlement)} left${q.overageUsed ? `, ${Math.round(q.overageUsed)} beyond` : ""})`
+          : `Copilot ${noun} ${Math.round(q.percentRemaining)}% left`,
     })
   }
 
