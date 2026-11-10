@@ -6,7 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./engine": "./src/engine/index.ts",
-    "./tui": "./src/tui.ts",
+    "./tui": "./src/tui.tsx",
     "./gui-experimental": "./dist/gui-experimental.cjs"
   },
   "files": [
@@ -27,8 +27,27 @@
     "build": "vite build",
     "prepack": "npm run build"
   },
+  "peerDependencies": {
+    "@opentui/core": ">=0.8.1",
+    "@opentui/solid": ">=0.8.1",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@opencode/plugin": "2.2.6",
+    "@opencode/theme": "^2.2.6",
+    "@opentui/core": "^0.8.3",
+    "@opentui/solid": "^0.8.3",
     "@types/node": "^24.0.0",
     "electron": "^45.2.3",
     "solid-js": "^1.9.18",

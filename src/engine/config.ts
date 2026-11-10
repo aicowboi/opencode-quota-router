@@ -121,6 +121,8 @@ export type Config = {
    * Things worth knowing about without watching the dashboard. They appear on the dashboard, in the menu bar and as
    * toasts in the terminal; `system` also posts them through the operating system. Each kind can be turned off.
    */
+  /** Show the session's provider and window use in the terminal's prompt footer. */
+  statusLine: boolean
   notifications: { enabled: boolean; system: boolean; events: { fallback: boolean; return: boolean; allLimited: boolean; spendCap: boolean; usageCheck: boolean } }
   /**
    * Export to an OpenTelemetry collector (OTLP over HTTP, JSON). Off until `enabled` is true. Whatever is left empty
@@ -228,6 +230,7 @@ export const DEFAULTS: Config = {
     enabled: false, endpoint: "", protocol: "", headers: {}, level: "totals", projects: "off", intervalMs: 0, temporality: "",
     identity: { email: "", userId: "", organizationId: "", hostName: false }, attributes: {},
   },
+  statusLine: true,
   notifications: { enabled: true, system: false, events: { fallback: true, return: true, allLimited: true, spendCap: true, usageCheck: true } },
   retention: { toolsDays: 400, executionsDays: 400, snapshotsDays: 90, poolLogDays: 730 },
   log: { level: "info" },

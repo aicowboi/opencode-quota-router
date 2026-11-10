@@ -8,6 +8,7 @@ import { refLabel } from "../engine/config.ts"
 import { VERSION, type Core } from "../core.ts"
 import { planAdvice } from "../advisor.ts"
 import { runDoctor } from "../doctor.ts"
+import { buildStatus } from "../status.ts"
 import { claudePlan } from "../engine/plans.ts"
 import { orderedChain } from "../engine/router.ts"
 import fs from "node:fs"
@@ -183,6 +184,8 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           return json(res, { at: Date.now(), checks: runDoctor(core) })
         case "/api/notifications":
           return json(res, core.alerts({ after: url.searchParams.has("after") ? num("after", 0) : undefined, limit: num("limit", 50) }))
+        case "/api/status":
+          return json(res, buildStatus(core))
         case "/api/menubar":
           return json(res, buildMenubar(core))
         case "/api/summary":

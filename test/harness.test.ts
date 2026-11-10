@@ -382,6 +382,7 @@ test("dashboard serves the page and state, and rejects foreign hosts", async () 
     const state: any = await (await fetch(`${d.url}/api/state`)).json()
     assert.ok(Array.isArray(state.providers) && state.providers[0].id === "claude-agent")
     assert.deepEqual(Object.keys(await (await fetch(`${d.url}/api/notifications?after=0`)).json()), ["alerts", "last"])
+    assert.deepEqual(Object.keys(await (await fetch(`${d.url}/api/status`)).json()).slice(0, 4), ["now", "enabled", "paused", "dryRun"])
     const doctor: any = await (await fetch(`${d.url}/api/doctor`)).json()
     assert.ok(doctor.checks.some((c: any) => c.id === "routing" && c.status === "ok"))
     // fetch cannot override Host, so use a raw request, as a DNS-rebinding page would produce.
@@ -540,7 +541,7 @@ test("spend cap: recorded spend stops failover onto a pay-per-use provider", asy
 
 test("notifications: raised once per event, rate-limited, switchable, and read through one feed", async () => {
   const { raise, feed, systemNotify, pruneAlerts } = await import("../src/alerts.ts")
-  const { follower } = await import("../src/tui.ts")
+  const { follower } = await import("../src/tui-feed.ts")
   core.store.run("DELETE FROM notifications")
   const sid = "ses_alert"
   const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
@@ -1035,4 +1036,77 @@ test("efficiency figures: cache hit rate, tokens per tool call, failed rate and 
   const e = q.efficiency({ input: 2_000, cache_read: 6_000, cache_write: 2_000, tokens: 12_000, steps: 40, failed: 2 }, 8, [{ at: now - 30 * MIN, until: now - 20 * MIN }, { at: now - 5 * MIN, until: now + 10 * MIN }, { at: now - 60 * MIN, until: null }], now)
   assert.deepEqual(e, { cacheHitRate: 0.6, tokensPerToolCall: 1500, toolCalls: 8, failedRate: 0.05, waitMs: 15 * MIN, waits: 3 })
   assert.deepEqual(q.efficiency({}, 0, [], now), { cacheHitRate: undefined, tokensPerToolCall: undefined, toolCalls: 0, failedRate: undefined, waitMs: 0, waits: 0 })
+})
+
+test("status line: the session's provider and window use, the provider it left, and what turns the line off", async () => {
+  const { buildStatus } = await import("../src/status.ts")
+  const { statusLine, reader } = await import("../src/tui-feed.ts")
+  const now = Date.now()
+  const HOUR = 3_600_000
+  const time = (at: number, from: number) => `in ${Math.round((at - from) / HOUR)}h`
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  const sid = "ses_status"
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  const grok = { providerID: "xai", id: "grok-4.7", variant: "high" }
+  const s = core.session(sid)
+  s.current = opus
+  core.pools.usage("claude-agent", { utilization: 62.4, exhausted: false, warn: false, evidence: "5-hour window at 62%" })
+
+  let feed = buildStatus(core, now)
+  assert.deepEqual(feed.sessions[sid], { provider: "claude-agent", pct: 62.4 })
+  assert.deepEqual(feed.top, { provider: "claude-agent", pct: 62.4 })
+  assert.deepEqual(statusLine(feed, sid, time), { text: "claude-agent 62%", tone: "muted" })
+  // A prompt with no routed session shows the provider a new one would start on.
+  assert.deepEqual(statusLine(feed, "ses_unknown", time), { text: "claude-agent 62%", tone: "muted" })
+  assert.deepEqual(statusLine(feed, undefined, time), { text: "claude-agent 62%", tone: "muted" })
+
+  // Nearly full: a warning. Run out and moved to a fallback: the line says where the session came from and when that is back.
+  core.pools.usage("claude-agent", { utilization: 93, exhausted: false, warn: true, evidence: "5-hour window at 93%" })
+  assert.deepEqual(statusLine(buildStatus(core, now), sid, time), { text: "claude-agent 93%", tone: "warning" })
+  core.pools.usage("claude-agent", { utilization: 100, resetAt: now + 2 * HOUR, exhausted: true, warn: true, evidence: "5-hour window at 100%" })
+  s.current = grok
+  s.fallback = { from: opus, reason: "5-hour limit", at: now }
+  feed = buildStatus(core, now)
+  assert.deepEqual(feed.sessions[sid], { provider: "xai", from: "claude-agent", fromUntil: core.pools.get("claude-agent").until })
+  assert.deepEqual(statusLine(feed, sid, time), { text: "xai · claude-agent back in 2h", tone: "warning" })
+  assert.equal(feed.top?.provider !== "claude-agent", true)
+
+  // Every provider of the session limited: it waits, and the line says until when.
+  s.current = opus
+  s.fallback = undefined
+  assert.deepEqual(statusLine(buildStatus(core, now), sid, time), { text: "claude-agent 100% limited until in 2h", tone: "error" })
+
+  // Paused and dry run are said; turned off, nothing is shown.
+  core.pools.reset("claude-agent", "test")
+  core.paused = true
+  core.setSetting("dryRun", true)
+  assert.match(statusLine(buildStatus(core, now), sid, time)!.text, /^claude-agent( \d+%)? · paused · dry run$/)
+  core.paused = false
+  core.setSetting("dryRun", undefined)
+  core.setSetting("statusLine", false)
+  assert.equal(buildStatus(core, now).enabled, false)
+  assert.equal(statusLine(buildStatus(core, now), sid, time), undefined)
+  core.setSetting("statusLine", undefined)
+  assert.equal(statusLine(undefined, sid, time), undefined)
+  assert.equal(statusLine({ now, enabled: true, paused: false, dryRun: false, sessions: {} }, sid, time), undefined)
+  core.sessions.delete(sid)
+
+  // The reader finds the dashboard on a later port, keeps to it, and looks again once it is gone.
+  const asked: string[] = []
+  let up = true
+  const read = reader(47321, (async (url: string) => {
+    asked.push(url)
+    if (!up || !url.includes(":47323/")) throw new Error("refused")
+    return { ok: true, json: async () => ({ sessions: {} }) }
+  }) as any)
+  const ok = (b: any) => typeof b?.sessions === "object"
+  assert.deepEqual(await read("/api/status", ok), { sessions: {} })
+  assert.equal(asked.length, 3)
+  await read("/api/status", ok)
+  assert.equal(asked.length, 4)
+  up = false
+  assert.equal(await read("/api/status", ok), undefined)
+  assert.equal(asked.length, 5)
+  assert.equal(await read("/api/status", ok), undefined)
+  assert.equal(asked.length, 10)
 })

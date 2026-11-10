@@ -233,6 +233,8 @@ Sessions move at their next turn after a schedule starts or ends, never in the m
 
 **Menu bar** (OpenCode Desktop only): a ring showing Claude's 5-hour window, with short status text. Its menu shows allowances, the route, running sessions, today's totals and quick actions. Turn it off with `"dashboard": { "menubar": false }`.
 
+**Status line:** the terminal shows, under the prompt, the provider the session is on and how full its tightest window is (`claude-agent 62%`). It turns amber from 90% and while the session runs on a fallback, when it also says when the provider it left is expected back (`xai · claude-agent back 21:40`), and red while every provider the session can use is limited. On the home screen it shows the provider a new session would start on. It reads the dashboard's `/api/status` feed every five seconds, so it needs the dashboard on; `"statusLine": false` hides it.
+
 **Notifications:** quota-router tells you when a session falls back, when it returns, when every provider is limited, when a spend cap is reached, and when a usage check has been failing for ten minutes. They appear on the dashboard, in the menu bar's menu, and as toasts in the OpenCode terminal. Set `"notifications": { "system": true }` to also get them from the operating system (`osascript` on macOS, `notify-send` on Linux). The same thing is not repeated within a few minutes, there are never more than 20 an hour, and each kind can be turned off under `notifications.events`. A notification holds model and provider names and the reason for the change; never a prompt, a session title or any code.
 
 **Telemetry export:** to see the same totals in Grafana, Datadog, Honeycomb or your own OpenTelemetry collector, set `"telemetry": { "enabled": true, "endpoint": "https://…" }`. It is off by default, sends counts and costs only, and identifies you or your projects only if you ask it to. See [docs/telemetry.md](docs/telemetry.md).
@@ -298,6 +300,7 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `spend.dailyUsd` / `monthlyUsd` | 0 (no cap) | Most that pay-per-use providers may cost in a local day or month, in US dollars |
 | `spend.providers.<id>.dailyUsd` / `monthlyUsd` | 0 (no cap) | The same, for one provider |
 | `headers.observe` | anthropic, github-copilot | Providers whose rate-limit headers are read. Adding `openai` or `xai` turns off their WebSocket transport. |
+| `statusLine` | true | Show the session's provider and how full its window is in the terminal's prompt footer |
 | `notifications.enabled` | true | Record notifications and show them on the dashboard, in the menu bar and as terminal toasts |
 | `notifications.system` | false | Also post them through the operating system (macOS and Linux) |
 | `notifications.events.<kind>` | true | Turn one kind off: `fallback`, `return`, `allLimited`, `spendCap`, `usageCheck` |
