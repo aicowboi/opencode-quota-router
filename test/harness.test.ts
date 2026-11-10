@@ -270,6 +270,9 @@ test("recorder: steps, costs and dashboard queries", async () => {
     const r = q.resolveRange(range)
     const sum: any = q.summary(core.store, r)
     assert.ok(sum.tokens >= 102_000, `${range} tokens ${sum.tokens}`)
+    assert.ok(sum.efficiency.toolCalls >= 1, `${range} tool calls`)
+    assert.ok(sum.efficiency.cacheHitRate > 0 && sum.efficiency.cacheHitRate < 1)
+    assert.equal(sum.efficiency.tokensPerToolCall, Math.round(sum.tokens / sum.efficiency.toolCalls))
     assert.ok(q.series(core.store, r).rows.length > 0)
     assert.ok(q.breakdown(core.store, r, "project").rows.some((x: any) => x.key === "/home/user/project"))
     assert.ok(q.tools(core.store, r).rows.some((x: any) => x.name === "shell"))
@@ -1024,4 +1027,12 @@ test("recorder: time to first token is the first sign of an answer", () => {
   assert.equal(typeof h.anthropic.firstTokenMs, "number")
   core.store.run("DELETE FROM steps WHERE session_id = ?", sid)
   ;(core as any).healthCache = undefined
+})
+
+test("efficiency figures: cache hit rate, tokens per tool call, failed rate and time lost to limits", () => {
+  const now = Date.parse("2026-11-09T19:00:00Z")
+  const MIN = 60_000
+  const e = q.efficiency({ input: 2_000, cache_read: 6_000, cache_write: 2_000, tokens: 12_000, steps: 40, failed: 2 }, 8, [{ at: now - 30 * MIN, until: now - 20 * MIN }, { at: now - 5 * MIN, until: now + 10 * MIN }, { at: now - 60 * MIN, until: null }], now)
+  assert.deepEqual(e, { cacheHitRate: 0.6, tokensPerToolCall: 1500, toolCalls: 8, failedRate: 0.05, waitMs: 15 * MIN, waits: 3 })
+  assert.deepEqual(q.efficiency({}, 0, [], now), { cacheHitRate: undefined, tokensPerToolCall: undefined, toolCalls: 0, failedRate: undefined, waitMs: 0, waits: 0 })
 })

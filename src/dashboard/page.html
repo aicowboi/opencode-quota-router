@@ -101,11 +101,14 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.005em }
 
 /* Ledger strip */
 .ledger { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line) }
+.ledger.eff { grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 0 }
+.ledger.eff .v { font-size: 20px }
 .fig { padding: 16px 18px 16px 0 }
 .fig + .fig { border-left: 1px solid var(--line); padding-left: 18px }
 .fig .k { color: var(--muted); font-size: 12.5px }
 .fig .v { font-size: 28px; font-weight: 300; letter-spacing: -.02em; margin: 4px 0 2px; line-height: 1.15 }
 .fig .s { color: var(--muted); font-size: 12px; line-height: 1.4 }
+@media (max-width: 1100px) { .ledger.eff .fig:nth-child(4) { border-left: 1px solid var(--line); padding-left: 18px } .ledger.eff .fig:nth-child(n+4) { border-top: 0 } }
 @media (max-width: 1100px) { .ledger { grid-template-columns: repeat(3, minmax(0, 1fr)) } .fig:nth-child(4) { border-left: 0; padding-left: 0 } .fig:nth-child(n+4) { border-top: 1px solid var(--line) } }
 
 /* Lists */
@@ -200,6 +203,7 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
   <section aria-labelledby="h-numbers">
     <div class="sec-head"><h2 id="h-numbers">Totals</h2><span class="caption" id="rangeCaption"></span></div>
     <div class="ledger" id="ledger"></div>
+    <div class="ledger eff" id="efficiency"></div>
   </section>
 
   <section aria-labelledby="h-route">
@@ -540,6 +544,14 @@ function renderLedger() {
     ["Fallbacks", String(fb), n(r.recovery) + " " + plural(n(r.recovery), "return") + " · " + n(s.failed) + " failed " + plural(n(s.failed), "request")],
   ]
   $("ledger").innerHTML = figs.map(([k, v, sub]) => '<div class="fig"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + '</div><div class="s">' + esc(sub) + "</div></div>").join("")
+  const e = s.efficiency || {}, pct = (x) => x == null ? "–" : (x * 100 < 10 && x > 0 ? (x * 100).toFixed(1) : Math.round(x * 100)) + "%"
+  const eff = [
+    ["Cache hit rate", pct(e.cacheHitRate), "Input read from the provider's cache, which costs about a tenth"],
+    ["Tokens per tool call", e.tokensPerToolCall == null ? "–" : fmtN(e.tokensPerToolCall), fmtInt(e.toolCalls) + " tool " + plural(n(e.toolCalls), "call")],
+    ["Failed requests", pct(e.failedRate), fmtInt(s.failed) + " of " + fmtInt(s.steps) + " requests"],
+    ["Time lost to limits", n(e.waitMs) ? fmtDur(e.waitMs) : "none", n(e.waits) ? fmtInt(e.waits) + " " + plural(n(e.waits), "wait") + " with every provider limited" : "No session had to wait for a limit"],
+  ]
+  $("efficiency").innerHTML = eff.map(([k, v, sub]) => '<div class="fig"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + '</div><div class="s">' + esc(sub) + "</div></div>").join("")
   $("rangeCaption").textContent = "Usage " + RANGE_TEXT[range]
 }
 

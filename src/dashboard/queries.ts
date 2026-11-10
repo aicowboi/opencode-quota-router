@@ -44,6 +44,39 @@ const SUMS = `COALESCE(SUM(steps), 0) AS steps, COALESCE(SUM(failed), 0) AS fail
   COALESCE(SUM(cache_write), 0) AS cache_write, COALESCE(SUM(input + output + reasoning + cache_read + cache_write), 0) AS tokens,
   COALESCE(SUM(equiv), 0) AS equiv, COALESCE(SUM(actual), 0) AS actual, COALESCE(SUM(model_ms), 0) AS model_ms`
 
+export type Efficiency = {
+  /** Share of the input that was read from the provider's cache, 0 to 1. Absent when nothing was sent. */
+  cacheHitRate?: number
+  /** Tokens of every kind per tool call. Absent when no tool was called. */
+  tokensPerToolCall?: number
+  toolCalls: number
+  /** Share of requests that failed, 0 to 1. */
+  failedRate?: number
+  /** Time sessions spent waiting because every provider in their chain was limited, and how many times. */
+  waitMs: number
+  waits: number
+}
+
+/** Figures that say how well the tokens were spent, from totals that are already on hand. */
+export function efficiency(t: { input?: number; cache_read?: number; cache_write?: number; tokens?: number; steps?: number; failed?: number }, toolCalls: number, waits: Array<{ at: number; until: number | null }>, now = Date.now()): Efficiency {
+  const sent = (t.input ?? 0) + (t.cache_read ?? 0) + (t.cache_write ?? 0)
+  // A wait still under way counts up to now; one with no end recorded counts for nothing.
+  const waitMs = waits.reduce((sum, w) => sum + (w.until ? Math.max(0, Math.min(w.until, now) - w.at) : 0), 0)
+  return {
+    cacheHitRate: sent > 0 ? (t.cache_read ?? 0) / sent : undefined,
+    tokensPerToolCall: toolCalls > 0 ? Math.round((t.tokens ?? 0) / toolCalls) : undefined,
+    toolCalls,
+    failedRate: (t.steps ?? 0) > 0 ? (t.failed ?? 0) / t.steps! : undefined,
+    waitMs,
+    waits: waits.length,
+  }
+}
+
+function toolCalls(store: Store, r: Range): number {
+  if (r.raw) return store.get<{ n: number }>(`SELECT COUNT(*) AS n FROM tools WHERE ${r.name === "24h" ? "started_at >= ?" : "day = ?"}`, r.name === "24h" ? r.fromMs : r.today)?.n ?? 0
+  return store.get<{ n: number }>("SELECT COALESCE((SELECT SUM(calls) FROM daily_tools WHERE day >= ? AND day < ?), 0) + (SELECT COUNT(*) FROM tools WHERE day = ?) AS n", r.fromDay, r.today, r.today)?.n ?? 0
+}
+
 export function summary(store: Store, r: Range) {
   const u = usage(r)
   const totals = store.get<Record<string, number>>(`${u.cte} SELECT ${SUMS} FROM u`, ...u.params) ?? {}
@@ -54,6 +87,7 @@ export function summary(store: Store, r: Range) {
     modelMs: totals.model_ms ?? 0,
     sessions,
     routing: Object.fromEntries(routing.map((x) => [x.trigger, x.n])),
+    efficiency: efficiency(totals, toolCalls(store, r), store.all<{ at: number; until: number | null }>("SELECT at, until FROM routing WHERE at >= ? AND dry = 0 AND trigger IN ('wait', 'deferred')", r.fromMs)),
   }
 }
 
