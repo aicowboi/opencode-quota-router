@@ -4,6 +4,7 @@ import { classify, modelPools } from "../src/engine/classify.ts"
 import { checkSetting, loadConfig, overlay, parseRef, withSetting } from "../src/engine/config.ts"
 import { composeGates, economyGate, parseUntil, saveGate, spendBlocks, spendGate } from "../src/engine/policy.ts"
 import { forecast, paceGate, type WindowForecast } from "../src/engine/forecast.ts"
+import { advise, claudePlan, copilotPlan, PLANS } from "../src/engine/plans.ts"
 import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
 import { findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
@@ -406,4 +407,74 @@ test("Copilot economy: near the end of the allowance, expensive models go elsewh
   assert.equal(gate({ providerID: "anthropic", id: "claude-opus-5-5" }), undefined)
   assert.equal(gate({ providerID: "github-copilot", id: "not-priced" }), undefined)
   assert.equal(economyGate(cfg({ copilot: { economyAtPct: 90, economyOutputPrice: 50 } }), 92, priced)!({ providerID: "github-copilot", id: "claude-opus-5.5" }), undefined)
+})
+
+test("plans: Claude and Copilot plans are recognised from what the providers report", () => {
+  assert.deepEqual(claudePlan("pro", "default_claude_ai"), { id: "claude.pro", name: "Claude Pro", multiplier: 1 })
+  assert.deepEqual(claudePlan("max", "default_claude_max_5x"), { id: "claude.max", name: "Claude Max (5x)", multiplier: 5 })
+  assert.deepEqual(claudePlan("max", "default_claude_max_20x"), { id: "claude.max", name: "Claude Max (20x)", multiplier: 20 })
+  assert.deepEqual(claudePlan("team", "default_claude_max_5x"), { id: "claude.team-premium", name: "Claude Team (premium seat, 5x)", multiplier: 5 })
+  assert.equal(claudePlan("team", undefined)?.id, "claude.team-standard")
+  assert.equal(claudePlan("enterprise", undefined)?.id, "claude.enterprise")
+  assert.equal(claudePlan("ultra", undefined)?.multiplier, 10)
+  assert.equal(claudePlan("something-new", undefined)?.id, undefined)
+  assert.equal(claudePlan(undefined, undefined), undefined)
+  assert.equal(copilotPlan("business"), "copilot.business")
+  assert.equal(copilotPlan("individual_pro"), "copilot.pro")
+  assert.equal(copilotPlan("pro_plus"), "copilot.pro-plus")
+  assert.equal(copilotPlan("free"), undefined)
+  assert.equal(new Set(PLANS.map((p) => p.id)).size, PLANS.length)
+})
+
+test("plan advice: a larger plan when limits cost more than the difference, a smaller one when most of it went unused", () => {
+  const base = { days: 30, coveredDays: 30, fallbackUsd: 0 }
+  // Too little record to say anything.
+  assert.deepEqual(advise({ ...base, coveredDays: 3, claude: { planID: "claude.pro", hits: 20, limitedMs: 3_600_000 } }), [])
+
+  // Limited often, and the pay-per-use spend is more than the next plan costs.
+  let [a] = advise({ ...base, fallbackUsd: 96, claude: { planID: "claude.pro", hits: 14, limitedMs: 40 * 3_600_000, peakWeeklyPct: 100 } })
+  assert.equal(a.verdict, "move-up")
+  assert.equal(a.title, "Claude: limited 14 times")
+  assert.equal(a.detail, "Claude Pro was limited 14 times in the last 30 days, for about 40 h in all, and pay-per-use providers cost $96 in that time. Claude Max has 5 times the allowance for $80 more a month. The pay-per-use spend alone was more than the difference.")
+  // Limited a few times with little spent: worth watching, not worth paying for.
+  ;[a] = advise({ ...base, fallbackUsd: 4, claude: { planID: "claude.pro", hits: 4, limitedMs: 5 * 3_600_000 } })
+  assert.equal(a.verdict, "watch")
+  assert.match(a.detail, /pays off only if the waiting costs you more/)
+  // A corrected price is used.
+  ;[a] = advise({ ...base, fallbackUsd: 60, prices: { "claude.max": 70 }, claude: { planID: "claude.pro", hits: 4, limitedMs: 3_600_000 } })
+  assert.match(a.detail, /for \$50 more a month/)
+  assert.equal(a.verdict, "move-up")
+  // A seat an organisation assigns has no price to compare.
+  ;[a] = advise({ ...base, claude: { planID: "claude.team-standard", planName: "Claude Team (standard seat)", hits: 12, limitedMs: 3_600_000 } })
+  assert.match(a.detail, /Claude Team \(premium seat\) has 5 times the allowance\.$/)
+  assert.equal(a.verdict, "move-up")
+  ;[a] = advise({ ...base, claude: { planID: "claude.ultra", hits: 5, limitedMs: 3_600_000 } })
+  assert.match(a.detail, /This is the largest plan/)
+
+  // Never limited, and the busiest week would fit in the plan below.
+  ;[a] = advise({ ...base, claude: { planID: "claude.max", hits: 0, limitedMs: 0, peakWeeklyPct: 12 } })
+  assert.equal(a.verdict, "move-down")
+  assert.equal(a.title, "Claude: Claude Pro would have covered it")
+  assert.match(a.detail, /costs \$80 less a month and has 20% of the allowance, so that week would have used about 60% of it/)
+  // The same peak is too much for the plan below; and two weeks of record are needed before saying so.
+  assert.equal(advise({ ...base, claude: { planID: "claude.max", hits: 0, limitedMs: 0, peakWeeklyPct: 30 } })[0].verdict, "keep")
+  assert.equal(advise({ ...base, coveredDays: 9, claude: { planID: "claude.max", hits: 0, limitedMs: 0, peakWeeklyPct: 12 } })[0].verdict, "keep")
+  // No usage figures and no limits: nothing to say.
+  assert.deepEqual(advise({ ...base, claude: { planID: "claude.max", hits: 0, limitedMs: 0 } }), [])
+
+  // Copilot: by credits.
+  ;[a] = advise({ ...base, copilot: { planID: "copilot.pro", entitlement: 1500, projected: 5200, overage: 0 } })
+  assert.equal(a.verdict, "move-up")
+  assert.match(a.detail, /On pace for about 5,200 credits this month against 1,500 included \(347%\)\. Copilot Pro\+ includes 7,000 for \$29 more a month\./)
+  ;[a] = advise({ ...base, copilot: { planID: "copilot.pro-plus", entitlement: 7000, projected: 900, overage: 0 } })
+  assert.equal(a.verdict, "move-down")
+  ;[a] = advise({ ...base, copilot: { planID: "copilot.business", entitlement: 1900, projected: 2400, overage: 0 } })
+  assert.equal(a.verdict, "watch")
+  assert.match(a.detail, /set by your organisation/)
+  assert.equal(advise({ ...base, copilot: { planID: "copilot.pro", entitlement: 1500, projected: 1300, overage: 0 } })[0].verdict, "keep")
+
+  // ChatGPT, where the plan is not known unless set.
+  ;[a] = advise({ ...base, chatgpt: { hits: 6, limitedMs: 3_600_000 } })
+  assert.equal(a.verdict, "watch")
+  assert.match(a.detail, /ChatGPT Pro has a much larger allowance than Plus/)
 })

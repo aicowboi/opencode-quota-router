@@ -250,6 +250,11 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
     <div id="alertList" aria-live="polite"></div>
   </section>
 
+  <section aria-labelledby="h-advice" id="advice">
+    <div class="sec-head"><h2 id="h-advice">Plan advice</h2><span class="caption" id="adviceCaption">Whether each subscription fits how you used it</span><span class="spacer"></span><button class="more" id="adviceRun">Work it out</button></div>
+    <div id="adviceList"></div>
+  </section>
+
   <section aria-labelledby="h-doctor" id="doctor">
     <div class="sec-head"><h2 id="h-doctor">Health check</h2><span class="caption" id="doctorCaption">What is connected, what would be used, and what needs attention</span><span class="spacer"></span><button class="more" id="doctorRun">Run check</button></div>
     <div id="doctorList"></div>
@@ -467,7 +472,7 @@ function renderLadder() {
     const t = provTotals[p.id]
     const use = t ? fmtN(t.tokens) + ' tokens<div class="muted">' + fmtUSD(p.kind === "metered" ? t.actual : t.equiv) + (p.kind === "metered" ? " spent" : " at API prices") + "</div>" : '<span class="muted">No use ' + esc(RANGE_TEXT[range]) + "</span>"
     return '<div class="rung' + (serving[p.id] ? " serving" : "") + (p.connected ? "" : " off") + '" style="--c:' + col + '"><span class="rank">' + (i + 1) + "</span>" +
-      '<div><div class="pname"><span class="dot" style="background:' + col + '"></span>' + esc(pname(p.id)) + '</div><div class="pkind">' + esc(PKIND[p.kind] || p.kind) + (p.discovered ? '<span class="tag" title="Connected in OpenCode and ranked by kind; set providers.' + esc(p.id) + '.priority to place it yourself">found</span>' : "") + "</div></div>" +
+      '<div><div class="pname"><span class="dot" style="background:' + col + '"></span>' + esc(pname(p.id)) + '</div><div class="pkind">' + esc(PKIND[p.kind] || p.kind) + (p.id === "claude-agent" && s.plans && s.plans.claude ? " · " + esc(s.plans.claude.replace(/^Claude /, "")) : "") + (p.discovered ? '<span class="tag" title="Connected in OpenCode and ranked by kind; set providers.' + esc(p.id) + '.priority to place it yourself">found</span>' : "") + "</div></div>" +
       "<div>" + cap + '</div><div class="state">' + st + '</div><div class="usage">' + use + "</div></div>"
   }).join("")
   for (const b of $("ladder").querySelectorAll("[data-reset]")) b.onclick = () => act({ action: "reset-pool", pool: b.dataset.reset })
@@ -636,6 +641,24 @@ async function loadDoctor() {
 $("doctorRun").onclick = loadDoctor
 if (location.hash === "#doctor") loadDoctor().then(() => $("doctor").scrollIntoView())
 addEventListener("hashchange", () => { if (location.hash === "#doctor") loadDoctor() })
+
+// ---------- plan advice ----------
+const VERDICT = { "move-up": ["↑", "st-warn", "A larger plan may pay off"], "move-down": ["↓", "st-info", "A smaller plan would do"], keep: ["✓", "st-ok", "The plan fits"], watch: ["!", "st-warn", "Worth watching"] }
+async function loadAdvice() {
+  const el = $("adviceList")
+  el.setAttribute("aria-busy", "true")
+  try {
+    const d = await api("/api/advice")
+    $("adviceCaption").textContent = "From " + Math.round(d.coveredDays) + " " + plural(Math.round(d.coveredDays), "day", "days") + " of recorded use · list prices, which change: check the provider before deciding"
+    el.innerHTML = d.advice.length ? d.advice.map((a) => { const [mark, cls, label] = VERDICT[a.verdict] || VERDICT.watch
+      return '<div class="check"><span class="' + cls + '" role="img" aria-label="' + label + '">' + mark + "</span><div><div>" + esc(a.title) + '</div><div class="why">' + esc(a.detail) + "</div></div></div>" }).join("")
+      : '<div class="empty">Nothing to say yet. Advice needs a week of recorded use, and the usage checks for the plans you want advice on.</div>'
+  } catch { el.innerHTML = '<div class="empty">The advice could not be worked out.</div>' }
+  el.removeAttribute("aria-busy")
+}
+$("adviceRun").onclick = loadAdvice
+if (location.hash === "#advice") loadAdvice().then(() => $("advice").scrollIntoView())
+addEventListener("hashchange", () => { if (location.hash === "#advice") loadAdvice() })
 
 // ---------- usage chart ----------
 const METRICS = [["tokens", "Tokens"], ["equiv", "Value"], ["actual", "Spend"]]

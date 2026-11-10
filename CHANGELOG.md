@@ -8,6 +8,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 - Forecasts: the dashboard and `/router doctor` say when a Claude, ChatGPT or Copilot window is on pace to run out before it resets.
 - Pace guard (`pace`): subagents, and agents you list, pass over a plan that is on pace to run out, keeping what is left for the main session. Off by default.
+- Plan advice (`/router advice` and a dashboard section): whether each subscription fits how it was used, from the local record of limits, usage checks and pay-per-use spend.
+- The Claude plan (Pro, Max, Ultra, Team standard and premium seats, Enterprise) is read from Claude Code's login when the usage check is on, and shown on the dashboard and in the health check.
 - Copilot credits: an estimate of the credits each model has used this month, a forecast of when the allowance runs out, and an economy setting (`copilot.economyAtPct`) that keeps the last of the allowance for cheaper models.
 - Chains per agent (`agents`): `"agents": { "plan": "sonnet" }` or `/router agent plan sonnet` runs an agent's sessions on a chain of your choice.
 - Save for later: `/router save <provider> 2h` (or "Save for 2 hours" on the dashboard) sets a provider aside until a time, so routing passes it over and its allowance is kept for when you want it.

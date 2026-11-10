@@ -803,3 +803,52 @@ test("switching cost: a large context waits longer in place, and a move says wha
   core.sessions.delete(sid)
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
 })
+
+test("plan advice: gathered from the local record of limits, usage checks and spend", async () => {
+  const { planAdvice, adviceText } = await import("../src/advisor.ts")
+  const now = Date.now()
+  const DAY = 86_400_000
+  const before = { claude: core.claude, copilot: core.copilot }
+  core.store.run("DELETE FROM pool_log")
+  core.store.run("DELETE FROM usage_snapshots")
+  const { localDay } = await import("../src/db.ts")
+  core.store.run("INSERT INTO steps (id, session_id, provider_id, model_id, started_at, day, status, cost_actual) VALUES ('adv1', 'ses_adv', 'anthropic', 'claude-opus-5-5', ?, ?, 'ok', 95)", now - 20 * DAY, localDay(now - 20 * DAY))
+  // Five separate limits of two hours each; the usage updates in between are not counted again.
+  for (let i = 1; i <= 5; i++) {
+    core.store.run("INSERT INTO pool_log (at, pool, status, kind, until) VALUES (?, 'claude-agent', 'blocked', 'window', ?)", now - i * 3 * DAY, now - i * 3 * DAY + 7_200_000)
+    core.store.run("INSERT INTO pool_log (at, pool, status, kind, until) VALUES (?, 'claude-agent', 'blocked', 'window', ?)", now - i * 3 * DAY + 60_000, now - i * 3 * DAY + 7_200_000)
+    core.store.run("INSERT INTO pool_log (at, pool, status) VALUES (?, 'claude-agent', 'available')", now - i * 3 * DAY + 7_200_000)
+  }
+  core.store.run("INSERT INTO usage_snapshots (at, provider, data) VALUES (?, 'claude-agent', ?)", now - 5 * DAY, JSON.stringify({ windows: [{ pool: "claude-agent", label: "Weekly (all models)", utilization: 97 }] }))
+  core.claude = { ok: true, at: now, plan: { type: "max", tier: "default_claude_max_5x" } }
+  const d = new Date(now)
+  const elapsed = (now - Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)) / (Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1))
+  core.copilot = { ok: true, at: now, data: { plan: "individual_pro", name: "ai_credits", entitlement: 1500, used: 1500 * elapsed * 0.5, remaining: 1, percentRemaining: 50, unlimited: false, overagePermitted: false, overageUsed: 0 } }
+
+  const a = planAdvice(core, now)
+  assert.equal(Math.round(a.coveredDays), 20)
+  assert.equal(a.plans.claude, "Claude Max (5x)")
+  const claude: any = a.advice.find((x: any) => x.provider === "claude")
+  assert.equal(claude.title, "Claude: limited 5 times")
+  assert.match(claude.detail, /for about 10 h in all, and pay-per-use providers cost \$95(\.\d+)? in that time\. Claude Ultra has 2 times the allowance for \$100 more a month\./)
+  const copilot: any = a.advice.find((x: any) => x.provider === "copilot")
+  // Early in a month no Copilot projection is made.
+  if (elapsed >= 0.2) assert.equal(copilot.title, "Copilot: Copilot Pro fits")
+  else assert.equal(copilot, undefined)
+  assert.match(adviceText(a.advice), /^- Claude: limited 5 times\n  /)
+  assert.match(adviceText([]), /needs a week/)
+  const { buildState } = await import("../src/dashboard/server.ts")
+  assert.equal(buildState(core).plans.claude, "Claude Max (5x)")
+  // The plan can be set by hand when it is not detected.
+  core.claude = { ok: false }
+  assert.deepEqual(core.setSetting("claude.plan", "pro"), { ok: true })
+  assert.equal(planAdvice(core, now).plans.claude, "Claude Pro")
+
+  core.setSetting("claude", undefined)
+  core.claude = before.claude
+  core.copilot = before.copilot
+  core.store.run("DELETE FROM pool_log")
+  core.store.run("DELETE FROM usage_snapshots")
+  core.store.run("DELETE FROM steps WHERE id = 'adv1'")
+  ;(core as any).spendCache = undefined
+})

@@ -175,6 +175,8 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 
 **Want subagents to stop draining a plan that is running low?** With a usage check on, the dashboard says when a plan window is on pace to run out before it resets, for example "5-hour session on pace to run out at 15:40 · resets 17:00". The pace is measured over the recent part of the window (the last hour of a 5-hour window, about a day and a half of a weekly one). Turn on the pace guard with `/router pace on` or `"pace": { "enabled": true }`, and subagent sessions, plus any agents you list in `pace.lightAgents`, are routed to the next provider in their chain while that forecast stands, so what is left of the plan goes to your main session. It is a preference, not a rule: if nothing else in the chain can run, the subagent still uses the plan.
 
+**Is my plan the right size?** `/router advice`, or "Plan advice" on the dashboard, looks at the last 30 days on this machine: how often each subscription was limited and for how long, the busiest week the usage checks recorded, and what pay-per-use providers cost in that time. It says when a larger plan would have cost less than the fallback spend, and when the busiest week would have fitted in the plan below. It needs at least a week of recorded use, and the usage checks (step 4) for the peak figures and for the Claude plan, which is read from Claude Code's login (Pro, Max, Ultra, Team seats, Enterprise). Prices are list prices built into the plugin; they change, so check the provider's page before deciding, and correct them with `advisor.prices`. Nothing is sent anywhere.
+
 **Want to keep a plan for later?** `/router save claude 2h` sets the Claude subscription aside for two hours, so what is left of its allowance is there for the work you want it for. Routing passes a saved provider over as if it were limited: sessions on it move to the next entry in their chain at their next turn, and return when the time is up or when you run `/router save claude off`. The dashboard has the same control on each subscription ("Save for 2 hours" and "Use now"). A saved provider stays saved across restarts. If every other entry in a chain is limited, the session waits; it does not fall back onto the provider you saved.
 
 ## Dashboard and menu bar
@@ -211,6 +213,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 | `/router save <provider> [2h]` | Set a provider aside for later: routing passes it over for `90m`, `2h`, `1d` or until a time such as `17:00` (two hours if left out, a week at most). `/router save <provider> off` ends it, `/router save off` ends all, `/router save` lists them |
 | `/router agent <name> <chain>` | Run one agent's sessions on a chain, for example `/router agent plan sonnet`. `/router agent <name> off` ends it, `/router agent` lists them |
 | `/router pace on` / `off` | Turn the pace guard on or off: subagents pass over a plan that is on pace to run out before it resets |
+| `/router advice` | Plan advice: whether each subscription fits how you used it over the last 30 days |
 | `/router doctor` | Run the health check and open it on the dashboard |
 | `/router telemetry on` / `off` | Turn the OpenTelemetry export on or off (the endpoint comes from `opencode.jsonc` or `OTEL_*`) |
 
@@ -236,6 +239,8 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `onExhausted.mode` / `maxWaitMs` | `wait` / 30 min | When everything is limited: wait for the earliest reset, or `fail` |
 | `claude.usageProbe` | false | Check Claude subscription usage (see step 4) |
 | `claude.avoidUsageCredits` / `cutoverAtPct` | true / 98 | Leave the subscription before usage credits are drawn |
+| `claude.plan` / `copilot.plan` / `chatgpt.plan` | detected | The plan you are on, for plan advice, when it is not detected: `pro`, `max`, `ultra`, `team`, `enterprise`; `pro`, `pro+`, `max`, `business`, `enterprise`; `plus`, `pro` |
+| `advisor.days` / `prices` | 30 / list prices | The period plan advice looks at, and corrections to its monthly list prices, for example `{ "claude.max": 100 }` |
 | `copilot.usageProbe` | false | Check Copilot's monthly allowance (see step 4) |
 | `copilot.avoidAdditionalCredits` / `reserveFraction` | true / 0.01 | Leave Copilot before paid credits beyond the allowance |
 | `copilot.economyAtPct` / `economyOutputPrice` | 0 (off) / 15 | Once this much of the allowance is used, models priced at this many dollars per million output tokens or more go to another provider when one can run them |

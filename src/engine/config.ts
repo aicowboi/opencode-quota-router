@@ -24,7 +24,9 @@ export type Config = {
   /** Rank and include every connected provider, not only configured ones. */
   discovery: { enabled: boolean }
   /** ChatGPT subscription (OpenAI signed in with ChatGPT): leave before a window is spent. */
-  chatgpt: { cutoverAtPct: number; warnAtPct: number }
+  chatgpt: { cutoverAtPct: number; warnAtPct: number; /** `plus` or `pro`, for plan advice. ChatGPT does not report it. */ plan: string }
+  /** Plan advice: the period it looks at, and corrections to the list prices by plan ID (`{ "claude.max": 100 }`). */
+  advisor: { days: number; prices: Record<string, number> }
   providers: Record<string, ProviderConfig>
   /** Ordered equivalents, best first. Entries are `provider/model#variant`. */
   chains: Record<string, ModelRef[]>
@@ -53,9 +55,13 @@ export type Config = {
     avoidUsageCredits: boolean
     cutoverAtPct: number
     warnAtPct: number
+    /** For plan advice when the plan is not detected: `pro`, `max`, `ultra`, `team` or `enterprise`. */
+    plan: string
   }
   copilot: {
     usageProbe: boolean
+    /** For plan advice when the plan is not detected: `pro`, `pro+`, `max`, `business` or `enterprise`. */
+    plan: string
     /** Cut over once included credits are spent, so additional paid credits are never drawn. */
     avoidAdditionalCredits: boolean
     /** Reserve kept back as a fraction of the monthly entitlement, to absorb in-flight requests. */
@@ -160,7 +166,8 @@ export const DEFAULTS: Config = {
   dryRun: false,
   explicitProviders: [],
   discovery: { enabled: true },
-  chatgpt: { cutoverAtPct: 98, warnAtPct: 85 },
+  chatgpt: { cutoverAtPct: 98, warnAtPct: 85, plan: "" },
+  advisor: { days: 30, prices: {} },
   providers: {
     "claude-agent": { priority: 1, kind: "subscription", allow: "always", windowCooldownMs: 15 * 60_000 },
     xai: { priority: 2, kind: "subscription", allow: "always", windowCooldownMs: 6 * HOUR },
@@ -178,8 +185,8 @@ export const DEFAULTS: Config = {
   onExhausted: { mode: "wait", maxWaitMs: 30 * 60_000 },
   contextFit: { safetyFactor: 1.15 },
   pace: { enabled: false, lightAgents: [] },
-  claude: { usageProbe: false, avoidUsageCredits: true, cutoverAtPct: 98, warnAtPct: 85 },
-  copilot: { usageProbe: false, avoidAdditionalCredits: true, reserveFraction: 0.01, monthlyCredits: 0, economyAtPct: 0, economyOutputPrice: 15 },
+  claude: { usageProbe: false, avoidUsageCredits: true, cutoverAtPct: 98, warnAtPct: 85, plan: "" },
+  copilot: { usageProbe: false, plan: "", avoidAdditionalCredits: true, reserveFraction: 0.01, monthlyCredits: 0, economyAtPct: 0, economyOutputPrice: 15 },
   probes: { activeIntervalMs: 3 * 60_000, idleIntervalMs: 15 * 60_000, maxAgeAtTurnMs: 60_000 },
   headers: { observe: ["anthropic", "github-copilot"], warnRemainingPct: 5 },
   dashboard: { enabled: true, port: 47321, host: "127.0.0.1", menubar: true },
@@ -291,7 +298,18 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
   // Telemetry headers and attributes are free-form maps of strings.
   const rawTelemetry = isObject(opts.telemetry) ? opts.telemetry : undefined
   if (rawTelemetry) opts.telemetry = { ...rawTelemetry, headers: {}, attributes: {} }
+  // List-price corrections are keyed by plan ID.
+  const rawPrices = isObject(opts.advisor) ? opts.advisor.prices : undefined
+  if (isObject(opts.advisor)) opts.advisor = { ...opts.advisor, prices: {} }
   const config = merge(DEFAULTS, opts, "", warnings)
+  config.advisor = { days: Math.min(365, Math.max(7, config.advisor.days)), prices: {} }
+  if (isObject(rawPrices)) {
+    for (const [id, value] of Object.entries(rawPrices)) {
+      if (UNSAFE_KEYS.has(id)) continue
+      if (typeof value === "number" && Number.isFinite(value) && value >= 0) config.advisor.prices[id] = value
+      else warnings.push(`advisor.prices.${id} should be a price in US dollars a month; ignored`)
+    }
+  } else if (rawPrices !== undefined) warnings.push("advisor.prices should be an object of plan: price; ignored")
 
   config.providers = { ...DEFAULTS.providers }
   config.explicitProviders = isObject(rawProviders) ? Object.keys(rawProviders) : []

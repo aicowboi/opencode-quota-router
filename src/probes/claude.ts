@@ -18,7 +18,7 @@ const run = (cmd: string, args: string[]) =>
     execFile(cmd, args, { timeout: 4000, maxBuffer: 1 << 20 }, (err, stdout) => (err ? reject(err) : resolve(stdout))),
   )
 
-export async function readClaudeToken(): Promise<{ token: string; expiresAt?: number } | undefined> {
+export async function readClaudeToken(): Promise<{ token: string; expiresAt?: number; plan?: { type?: string; tier?: string } } | undefined> {
   let raw: string | undefined
   if (process.platform === "darwin") {
     raw = await run("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"]).catch(() => undefined)
@@ -31,7 +31,8 @@ export async function readClaudeToken(): Promise<{ token: string; expiresAt?: nu
   try {
     const oauth = JSON.parse(raw.trim()).claudeAiOauth
     if (typeof oauth?.accessToken !== "string") return undefined
-    return { token: oauth.accessToken, expiresAt: typeof oauth.expiresAt === "number" ? oauth.expiresAt : undefined }
+    const text = (v: unknown) => (typeof v === "string" && /^[\w .+-]{1,64}$/.test(v) ? v : undefined)
+    return { token: oauth.accessToken, expiresAt: typeof oauth.expiresAt === "number" ? oauth.expiresAt : undefined, plan: { type: text(oauth.subscriptionType), tier: text(oauth.rateLimitTier) } }
   } catch {
     return undefined
   }

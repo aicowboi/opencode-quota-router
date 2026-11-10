@@ -69,7 +69,7 @@ export class Core {
   paused = false
   started = Date.now()
   lastActivity = Date.now()
-  claude: ProbeStatus<ClaudeUsage> & { lastExtraUsed?: number } = { ok: false }
+  claude: ProbeStatus<ClaudeUsage> & { lastExtraUsed?: number; plan?: { type?: string; tier?: string } } = { ok: false }
   copilot: ProbeStatus<CopilotQuota> = { ok: false }
   /** ChatGPT plan windows, read from response headers while OpenAI is signed in with ChatGPT. */
   chatgpt: ProbeStatus<{ windows: CodexWindow[] }> = { ok: false }
@@ -653,6 +653,7 @@ export class Core {
         this.claude = { ...this.claude, at: now, ok: false, message: "Claude Code login not found", nextAt: now + 10 * 60_000 }
         return
       }
+      this.claude.plan = login.plan
       if (login.expiresAt && login.expiresAt < now + 60_000) {
         this.claude = { ...this.claude, at: now, ok: false, message: "Claude Code login expired; it refreshes the next time Claude Code runs", nextAt: now + 2 * 60_000 }
         return

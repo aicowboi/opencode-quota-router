@@ -3,7 +3,9 @@
 import http from "node:http"
 import { refLabel } from "../engine/config.ts"
 import { VERSION, type Core } from "../core.ts"
+import { planAdvice } from "../advisor.ts"
 import { runDoctor } from "../doctor.ts"
+import { claudePlan } from "../engine/plans.ts"
 import { orderedChain } from "../engine/router.ts"
 import fs from "node:fs"
 import path from "node:path"
@@ -98,6 +100,7 @@ export function buildState(core: Core) {
     enabled: core.config.enabled,
     dryRun: core.config.dryRun,
     providers,
+    plans: { claude: core.hasProvider("claude-agent") ? claudePlan(core.config.claude.plan || core.claude.plan?.type, core.claude.plan?.tier)?.name : undefined },
     claude: { ok: core.claude.ok, at: core.claude.at, message: core.claude.message, data: core.claude.data, enabled: core.config.claude.usageProbe, cutoverAtPct: core.config.claude.cutoverAtPct },
     copilot: { ok: core.copilot.ok, at: core.copilot.at, message: core.copilot.message, data: core.copilot.data, enabled: core.config.copilot.usageProbe, reserveFraction: core.config.copilot.reserveFraction, economyAtPct: core.config.copilot.economyAtPct, byModel: core.copilot.data ? q.copilotCredits(core.store, Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1)) : [] },
     chatgpt: { active: core.chatgptActive(), at: core.chatgpt.at, data: core.chatgpt.data, cutoverAtPct: core.config.chatgpt.cutoverAtPct },
@@ -158,6 +161,8 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           return json(res, { app: "quota-router", pid: process.pid })
         case "/api/state":
           return json(res, buildState(core))
+        case "/api/advice":
+          return json(res, planAdvice(core))
         case "/api/doctor":
           return json(res, { at: Date.now(), checks: runDoctor(core) })
         case "/api/notifications":

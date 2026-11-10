@@ -1,5 +1,6 @@
 // A health check of the whole setup: what is connected, what would be used, and what is likely to go wrong.
 // Read-only. Nothing here reads a credential, and paths are shown relative to the home directory.
+import { claudePlan } from "./engine/plans.ts"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -83,6 +84,10 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   probe("probe-claude", "Claude", config.claude.usageProbe, core.hasProvider("claude-agent"), core.claude, "claude.usageProbe")
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
   if (core.chatgptActive()) add(core.chatgpt.at ? { id: "probe-chatgpt", status: "ok", title: "ChatGPT plan windows are being read", detail: `Last seen ${minutes(now - core.chatgpt.at)} ago` } : { id: "probe-chatgpt", status: "info", title: "ChatGPT plan windows appear after the first request" })
+
+  // Plans
+  const plan = core.hasProvider("claude-agent") ? claudePlan(config.claude.plan || core.claude.plan?.type, core.claude.plan?.tier) : undefined
+  if (plan) add({ id: "plan-claude", status: "info", title: `Claude plan: ${plan.name}`, detail: config.claude.plan ? "From claude.plan in your settings." : "As Claude Code's login reports it.", fix: "/router advice says whether it fits how you use it." })
 
   // Pace guard
   if (config.pace.enabled) {

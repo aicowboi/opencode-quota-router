@@ -1,4 +1,5 @@
 // quota-router: quota-aware provider routing for OpenCode V2, with a local usage dashboard.
+import { adviceText, planAdvice } from "./advisor.ts"
 import { parseUntil } from "./engine/policy.ts"
 import { backfill } from "./backfill.ts"
 import { refLabel } from "./engine/config.ts"
@@ -150,7 +151,7 @@ export default {
     await ctx.command.transform((editor: any) => {
       editor.add({
         name: "router",
-        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | save <provider> [2h|17:00|off] | agent <name> <chain|off> | pace on|off | doctor | telemetry on|off",
+        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | save <provider> [2h|17:00|off] | agent <name> <chain|off> | pace on|off | advice | doctor | telemetry on|off",
         execute: async (input: { sessionID: string; prompt: { text?: string } }) => {
           const { sessionID, prompt } = input
           core.log.info("command", { sessionID, text: prompt?.text })
@@ -252,6 +253,12 @@ export default {
                   : t.problems.length
                     ? `Telemetry export is on but cannot run: ${t.problems.join("; ")}`
                     : `Telemetry export is on: ${t.level === "events" ? "metrics and events" : "metrics"} go to ${t.endpoint} every ${Math.round(t.intervalMs / 1000)} s. No prompts, code or session titles are sent.`
+              break
+            }
+            case "advice": {
+              const a = planAdvice(core)
+              if (core.dashboardURL) void openURL(`${core.dashboardURL}/#advice`)
+              text = `quota-router plan advice, from ${Math.round(a.coveredDays)} days of recorded use\n${adviceText(a.advice)}`
               break
             }
             case "doctor":
