@@ -8,6 +8,7 @@ import { refLabel } from "./engine/config.ts"
 import { onCodexResponse, onEvent, onHttpResponse, onPrompt, onRetry } from "./controller.ts"
 import { Core, VERSION } from "./core.ts"
 import { startDashboard } from "./dashboard/server.ts"
+import { dashboardFile } from "./tui-feed.ts"
 import { doctorText, runDoctor } from "./doctor.ts"
 import { codexWindows, headroom } from "./engine/headers.ts"
 import { orderedChain } from "./engine/router.ts"
@@ -56,11 +57,28 @@ const KEY = Symbol.for("opencode-quota-router")
 const shared = (): Shared => ((globalThis as Record<symbol, Shared>)[KEY] ??= { seen: new Set() })
 
 /** Stop the core. `final` (plugin removed) also releases the dashboard port; a code reload keeps it for the next core. */
+/** Note where the dashboard is, for the terminal part and the command line, which don't get the plugin's options. */
+function noteDashboard(url: string) {
+  try {
+    const file = dashboardFile()
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+    fs.writeFileSync(file, JSON.stringify({ url, pid: process.pid, version: VERSION }), { mode: 0o600 })
+  } catch {}
+}
+
+function forgetDashboard() {
+  try {
+    const file = dashboardFile()
+    if (JSON.parse(fs.readFileSync(file, "utf8")).pid === process.pid) fs.rmSync(file)
+  } catch {}
+}
+
 async function shutdown(g: Shared, final = false) {
   const core = await g.core?.catch(() => undefined)
   g.core = undefined
   core?.stopTimers()
   await (final ? g.dashboard?.stop() : g.dashboard?.close())?.catch(() => {})
+  if (final) forgetDashboard()
   g.dashboard = undefined
   core?.log.info("stop")
   try {
@@ -78,6 +96,7 @@ async function boot(g: Shared, ctx: Ctx): Promise<Core> {
       return undefined
     })
     core.dashboardURL = g.dashboard?.url
+    if (core.dashboardURL) noteDashboard(core.dashboardURL)
   }
   if (core.config.backfill && !core.store.meta("backfilled")) {
     void backfill(core.store, (p, m, t, r) => core.price(p, m, t, r), core.started)

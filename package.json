@@ -16,7 +16,7 @@
     "src",
     "gui",
     "dist",
-    "docs",
+    "docs/*.md",
     "integrations",
     "README.md",
     "LICENSE",
@@ -36,17 +36,6 @@
     "@opentui/core": ">=0.8.1",
     "@opentui/solid": ">=0.8.1",
     "solid-js": ">=1.9.0"
-  },
-  "peerDependenciesMeta": {
-    "@opentui/core": {
-      "optional": true
-    },
-    "@opentui/solid": {
-      "optional": true
-    },
-    "solid-js": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@opencode/plugin": "2.2.6",

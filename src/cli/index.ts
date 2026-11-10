@@ -3,7 +3,7 @@
 // runs. Nothing is sent anywhere.
 import { execFile } from "node:child_process"
 import { VERSION } from "../version.ts"
-import { reader, statusLine, type StatusFeed } from "../tui-feed.ts"
+import { notedPort, reader, statusLine, type StatusFeed } from "../tui-feed.ts"
 import { defaultPaths, readUsage, SOURCES, type Paths, type Source } from "./readers.ts"
 import { GROUPS, loadPrices, RANGES, rangeStart, summarise, type GroupBy, type Row } from "./report.ts"
 
@@ -83,12 +83,14 @@ export function table(head: string[], rows: string[][]): string {
 // ---------- the dashboard ----------
 
 const port = (args: Args) => Number(args.flags.get("port")?.[0] ?? process.env.QUOTA_ROUTER_PORT ?? 47321)
+/** The dashboard: at the port given, or else where the plugin noted it is (it may have been set in opencode.jsonc). */
+const dashboard = (args: Args) => reader(port(args), fetch, args.flags.has("port") || process.env.QUOTA_ROUTER_PORT ? () => undefined : notedPort)
 const NOT_RUNNING = "The plugin isn't answering. Is OpenCode running with quota-router, and is the dashboard on?"
 const OLDER = "The running plugin is older than this command and can't answer it. Update quota-router in OpenCode."
 
 /** Ask the dashboard; when it doesn't answer, say whether the plugin is missing or just older than this command. */
 async function ask<T>(args: Args, path: string, ok: (b: any) => boolean): Promise<{ body: T } | { error: string }> {
-  const read = reader(port(args))
+  const read = dashboard(args)
   const body = await read<T>(path, ok)
   if (body !== undefined) return { body }
   return { error: (await read("/api/ping", (b) => b?.app === "quota-router")) ? OLDER : NOT_RUNNING }
@@ -126,7 +128,7 @@ async function usage(args: Args, out: Out, paths: Paths): Promise<number> {
 }
 
 async function limits(args: Args, out: Out, paths: Paths): Promise<number> {
-  const [{ codexLimits }, menubar] = await Promise.all([readUsage([], paths, { cache: !args.flags.has("no-cache") }), reader(port(args))<any>("/api/menubar", (b) => typeof b?.now === "number")])
+  const [{ codexLimits }, menubar] = await Promise.all([readUsage([], paths, { cache: !args.flags.has("no-cache") }), dashboard(args)<any>("/api/menubar", (b) => typeof b?.now === "number")])
   if (args.flags.has("json")) {
     out.log(JSON.stringify({ codex: codexLimits ?? null, claude: menubar?.claude ?? null, chatgpt: menubar?.chatgpt ?? null, copilot: menubar?.copilot ?? null }, null, 2))
     return 0
@@ -179,7 +181,7 @@ const ANSI = { muted: "\x1b[2m", warning: "\x1b[33m", error: "\x1b[31m" }
 
 /** For shell prompts: quick, quiet, never an error. Prints nothing when there's nothing to say. */
 async function prompt(args: Args, out: Out): Promise<number> {
-  const feed = await Promise.race([reader(port(args))<StatusFeed>("/api/status", (b) => typeof b?.sessions === "object" && b.sessions !== null), new Promise<undefined>((r) => (setTimeout(r, 400) as { unref?: () => void }).unref?.())])
+  const feed = await Promise.race([dashboard(args)<StatusFeed>("/api/status", (b) => typeof b?.sessions === "object" && b.sessions !== null), new Promise<undefined>((r) => (setTimeout(r, 400) as { unref?: () => void }).unref?.())])
   const line = statusLine(feed)
   if (!line) return 0
   const color = args.flags.has("color") || (!args.flags.has("no-color") && process.stdout.isTTY && !process.env.NO_COLOR)
@@ -201,8 +203,10 @@ async function doctor(args: Args, out: Out): Promise<number> {
 }
 
 async function open(args: Args, out: Out): Promise<number> {
-  // The dashboard takes the next free port when its own is taken.
-  for (let p = port(args); p < port(args) + 5; p++) {
+  // Where the plugin noted it is, then the port given and the next few (it takes the next free one when its own is taken).
+  const explicit = args.flags.has("port") || process.env.QUOTA_ROUTER_PORT
+  const noted = explicit ? undefined : notedPort()
+  for (const p of new Set([...(noted ? [noted] : []), ...Array.from({ length: 5 }, (_, i) => port(args) + i)])) {
     const ok = await fetch(`http://127.0.0.1:${p}/api/ping`, { signal: AbortSignal.timeout(1000) })
       .then((r) => r.json())
       .then((b: any) => b?.app === "quota-router")

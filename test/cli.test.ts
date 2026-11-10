@@ -9,6 +9,7 @@ import { claudeParser, codexParser, readOpenCode, readUsage, type Usage } from "
 import { scan, jsonlFiles } from "../src/cli/scan.ts"
 import { loadPrices, rangeStart, summarise, valueOf } from "../src/cli/report.ts"
 import { main, parseArgs, table } from "../src/cli/index.ts"
+import { dashboardFile, notedPort, reader } from "../src/tui-feed.ts"
 import { VERSION } from "../src/version.ts"
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qr-cli-"))
@@ -169,4 +170,31 @@ test("command line: arguments, help, errors, and a usage table from invented log
 test("the built command matches the source version", () => {
   const out = execFileSync(process.execPath, [path.join(import.meta.dirname, "..", "dist", "cli.mjs"), "--version"], { encoding: "utf8" }).trim()
   assert.equal(out, VERSION, "dist/cli.mjs is stale: run npm run build")
+})
+
+test("the dashboard's address: noted by the plugin, read first by the terminal part and the command line, and only if local", async () => {
+  const env = { XDG_DATA_HOME: path.join(tmp, "xdg") }
+  const file = dashboardFile(env)
+  assert.equal(file, path.join(tmp, "xdg", "opencode-quota-router", "dashboard.json"))
+  assert.equal(notedPort(file), undefined)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  for (const [url, port] of [["http://127.0.0.1:47450", 47450], ["http://localhost:47451", 47451], ["http://evil.example:47452", undefined], ["https://127.0.0.1:1", undefined], ["not a url", undefined]] as const) {
+    fs.writeFileSync(file, JSON.stringify({ url }))
+    assert.equal(notedPort(file), port, url)
+  }
+  fs.writeFileSync(file, "{ broken")
+  assert.equal(notedPort(file), undefined)
+
+  // The noted port is asked first; without an answer there, the usual ports follow.
+  const asked: number[] = []
+  const get = (async (url: string) => {
+    asked.push(Number(new URL(url).port))
+    if (!url.includes(":47450/")) throw new Error("refused")
+    return { ok: true, json: async () => ({ sessions: {} }) }
+  }) as any
+  assert.deepEqual(await reader(47321, get, () => 47450)("/api/status", () => true), { sessions: {} })
+  assert.deepEqual(asked, [47450])
+  asked.length = 0
+  assert.equal(await reader(47321, get, () => 47999)("/api/status", () => true), undefined)
+  assert.deepEqual(asked, [47999, 47321, 47322, 47323, 47324, 47325])
 })

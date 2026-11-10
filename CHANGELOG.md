@@ -55,6 +55,11 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Installing from npm is now the recommended way: `"package": "opencode-quota-router"` in `opencode.jsonc`. The menu bar part and the command line ship built in `dist/`.
 - Node.js is only needed for the command line and to build from source.
 
+### Fixed
+
+- The terminal part (status line and toasts) loads from the installed npm package, and finds the dashboard when its port was changed in `opencode.jsonc`: the server part notes the address in `dashboard.json`, since the terminal part doesn't receive the plugin's options.
+- A second OpenCode with its own data folder keeps its own dashboard, instead of showing the first one's.
+
 ### Security
 
 - Dashboard writes are refused when the browser says they came from another site, and settings changes need a token only the dashboard page has.

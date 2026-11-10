@@ -1,5 +1,8 @@
 // What the terminal part of quota-router reads from the local dashboard: the notification feed, shown as toasts, and
 // the status feed, shown as one line in the prompt footer. Nothing here draws; `tui.tsx` does, and tests use this file.
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 
 export type Toast = { title?: string; message: string; variant?: "info" | "success" | "warning" | "error"; duration?: number; sessionID?: string }
 type Alert = { id: number; kind: string; title: string; body?: string; sessionID?: string }
@@ -72,11 +75,34 @@ export function statusLine(feed: StatusFeed | undefined, sessionID?: string, tim
   return { text: parts.join(" · "), tone: e.limited ? "error" : e.from || (e.pct ?? 0) >= 90 ? "warning" : "muted" }
 }
 
-/** Reads one of the dashboard's feeds. The dashboard takes the next free port when its own is taken, so the next few are tried as well. */
-export function reader(basePort: number, get: typeof fetch = fetch) {
+/**
+ * The file where the server part notes its dashboard's address. The terminal part and the command line don't get the
+ * plugin's options (a custom `dashboard.port`), so they look here first.
+ */
+export const dashboardFile = (env: Record<string, string | undefined> = process.env) =>
+  path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "opencode-quota-router", "dashboard.json")
+
+/** The port in the dashboard file, when there is one and it is a local address. */
+export function notedPort(file = dashboardFile()): number | undefined {
+  try {
+    const url = new URL(JSON.parse(fs.readFileSync(file, "utf8")).url)
+    const port = Number(url.port)
+    return url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && port > 0 && port < 65536 ? port : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Reads one of the dashboard's feeds: at the port the dashboard file names, else at `basePort` and the next few (the
+ * dashboard takes the next free port when its own is taken).
+ */
+export function reader(basePort: number, get: typeof fetch = fetch, noted: () => number | undefined = notedPort) {
   let base: string | undefined
   return async <T>(path: string, ok: (body: any) => boolean): Promise<T | undefined> => {
-    for (const port of base ? [Number(new URL(base).port)] : Array.from({ length: 5 }, (_, i) => basePort + i)) {
+    const hint = base ? undefined : noted()
+    const ports = base ? [Number(new URL(base).port)] : [...new Set([...(hint ? [hint] : []), ...Array.from({ length: 5 }, (_, i) => basePort + i)])]
+    for (const port of ports) {
       const url = `http://127.0.0.1:${port}`
       try {
         const r = await get(`${url}${path}`, { signal: AbortSignal.timeout(2000) })

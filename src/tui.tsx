@@ -1,5 +1,9 @@
+/** @jsxImportSource @opentui/solid */
 // Terminal part of quota-router: shows the plugin's notifications as toasts in the OpenCode TUI, and the provider a
 // session is on, with how full its window is, in the prompt footer. It only reads the local dashboard's feeds.
+// The pragma above names the JSX runtime: OpenCode compiles this file with Bun, which reads no tsconfig.json from an
+// installed package. The terminal part does not get the plugin's options; the dashboard's port comes from the file
+// the server part writes (see `notedPort`).
 import { Plugin } from "@opencode/plugin/tui"
 import { createSignal, Show } from "solid-js"
 import { follower, reader, statusLine, type Feed, type StatusFeed } from "./tui-feed.ts"

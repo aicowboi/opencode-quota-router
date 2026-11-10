@@ -30,11 +30,16 @@ Only to the providers you already use: `api.anthropic.com` for the Claude usage 
 
 `~/.local/share/opencode-quota-router/` (or under `$XDG_DATA_HOME`):
 - `router.db`: usage, routing and session history (SQLite);
-- `router.log`.
+- `router.log`;
+- `dashboard.json`: the dashboard's local address and the process ID, so the terminal part and the command line can find it (readable only by you, removed when the plugin is removed).
 
 Session titles and project paths are stored there. No prompts, responses, file contents or credentials are stored.
 
 The dashboard listens on `127.0.0.1` only and rejects requests whose `Host` header is not local, which stops DNS rebinding. Every write (actions and settings) must be a JSON `POST` with a custom header, and is refused when the browser says it came from another site (`Origin`, `Sec-Fetch-Site`); a page elsewhere can't send a JSON body without a preflight, which the dashboard never answers. Settings changes also need a random token that is generated when the plugin starts and is only in the dashboard page itself. The settings page can change only the settings it lists, each checked for type and range; where the dashboard listens, where telemetry is sent and with which headers, the local server addresses and `explicitProviders` can only be changed in `opencode.jsonc`.
+
+## Dependencies
+
+The plugin itself has no runtime dependencies. The terminal part needs OpenTUI and Solid (`@opentui/core`, `@opentui/solid`, `solid-js`), which npm installs as peer dependencies, as OpenCode's plugin guide asks. At the time of writing, `npm audit` reports moderate advisories in `glob` and `minimatch`, which `@opentui/solid` pulls in for its compile-time Babel tooling. quota-router never runs that code, and there is no fix upstream yet.
 
 ## Reporting a vulnerability
 

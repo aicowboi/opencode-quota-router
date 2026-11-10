@@ -16,6 +16,11 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import * as q from "./queries.ts"
+import { createHash } from "node:crypto"
+import { dataDir } from "../log.ts"
+
+/** Which database this process serves, as a short hash of its folder: lets two OpenCode processes tell whether they share one, without saying where it is. */
+const STORE = createHash("sha256").update(dataDir()).digest("hex").slice(0, 12)
 
 const PAGE_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "page.html")
 /** Read on each request (it is small), so design changes show on reload. */
@@ -192,7 +197,7 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" })
           return res.end(page())
         case "/api/ping":
-          return json(res, { app: "quota-router", pid: process.pid })
+          return json(res, { app: "quota-router", pid: process.pid, store: STORE })
         case "/api/state":
           return json(res, buildState(core))
         case "/api/advice":
@@ -332,9 +337,10 @@ export async function startDashboard(core: Core): Promise<{ url: string; close: 
       else {
         // Another OpenCode process may already serve it from the same database.
         const other = await fetch(`http://127.0.0.1:${p}/api/ping`, { signal: AbortSignal.timeout(1000) })
-          .then((r) => r.json() as Promise<{ app?: string; pid?: number }>)
+          .then((r) => r.json() as Promise<{ app?: string; pid?: number; store?: string }>)
           .catch(() => undefined)
-        if (other?.app === "quota-router" && other.pid !== process.pid) {
+        // Only when it serves the same database: another OpenCode with its own data folder keeps its own dashboard.
+        if (other?.app === "quota-router" && other.pid !== process.pid && other.store === STORE) {
           core.log.info("dashboard served by another process", { port: p, pid: other.pid })
           return { url: `http://127.0.0.1:${p}`, close: async () => {}, stop: async () => {} }
         }
