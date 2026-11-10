@@ -8,8 +8,9 @@ import { forecast, paceGate, type WindowForecast } from "../src/engine/forecast.
 import { advise, claudePlan, copilotPlan, PLANS } from "../src/engine/plans.ts"
 import { nextMidnightIn, parseDuration, parseResetText, parseRetryAfter, parseRetryText, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
-import { findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
+import { fasterFirst, findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
 import { costOf, estimate } from "../src/engine/pricing.ts"
+import { healthGate, speedOf, summariseHealth, unreliable } from "../src/engine/health.ts"
 import { learnPool } from "../src/engine/learn.ts"
 import type { ModelInfo } from "../src/engine/types.ts"
 
@@ -568,4 +569,51 @@ test("a local server that is not running is passed over", () => {
   assert.equal(gate?.({ providerID: "anthropic", id: "claude-opus-5-5" }), undefined)
   assert.equal(checkSetting({}, {}, "local.ollamaUrl", "http://203.0.113.5:11434").ok, false, "where health checks go is set in opencode.jsonc only")
   assert.equal(checkSetting({}, {}, "local.healthCheck", false).ok, true)
+})
+
+test("health: time to first token, error rate, and what routing does with them", () => {
+  const MIN = 60_000
+  const config = cfg()
+  const req = (providerID: string, minsAgo: number, ok: boolean, firstMs?: number, errorType?: string) => ({ providerID, at: NOW - minsAgo * MIN, ok, firstMs, errorType })
+  const samples = [
+    req("claude-agent", 50, true, 900), req("claude-agent", 40, true, 1100), req("claude-agent", 2, true, 1000),
+    // Six requests in the window, four failed with server errors; a rate limit and a bad request are not health.
+    req("xai", 12, true, 400), req("xai", 10, false, undefined, "provider.internal"), req("xai", 8, false, undefined, "provider.unknown"),
+    req("xai", 6, false, undefined, "provider.internal"), req("xai", 4, true, 420), req("xai", 3, false, undefined, "provider.internal"),
+    req("xai", 2, false, undefined, "provider.rate-limit"), req("xai", 1, false, undefined, "provider.invalid-request"),
+    // Older than the window: counts towards speed, not towards the error rate.
+    req("xai", 40, true, 380),
+  ]
+  const health = summariseHealth(samples, NOW, config.health.windowMs)
+  assert.deepEqual(health["claude-agent"], { requests: 1, failed: 0, firstTokenMs: 1000, timed: 3 })
+  assert.deepEqual(health.xai, { requests: 6, failed: 4, firstTokenMs: 400, timed: 3 })
+  assert.equal(unreliable(config, health.xai), true)
+  assert.equal(unreliable(config, health["claude-agent"]), false)
+  assert.equal(unreliable(config, { requests: 4, failed: 4, timed: 0 }), false, "too few requests to judge")
+
+  const gate = healthGate(config, health)
+  assert.deepEqual(gate?.({ providerID: "xai", id: "grok-4.7" }), { reason: "unreliable right now (4 of the last 6 requests failed)", soft: true })
+  assert.equal(gate?.({ providerID: "claude-agent", id: "opus" }), undefined)
+  assert.equal(healthGate(cfg({ health: { enabled: false } }), health), undefined)
+
+  // A failing provider is passed over while another can run, and still used when nothing else can.
+  const pools = new PoolStore(config, () => NOW)
+  const first = cfg({ providers: { xai: { priority: 0 } } })
+  const preferred = { ...findInChains(first, { providerID: "xai", id: "grok-4.7" })!, variant: "high" }
+  assert.equal(route({ config: first, pools, models: MODELS, preferred, mode: "turn" }).target?.providerID, "xai")
+  assert.equal(route({ config: first, pools, models: MODELS, preferred, mode: "turn", gate }).target?.providerID, "claude-agent")
+  const only = new Map([...MODELS].filter(([k]) => k.startsWith("xai/")))
+  assert.equal(route({ config: first, pools, models: only, preferred, mode: "turn", gate }).target?.providerID, "xai")
+
+  // Same priority: the provider that starts answering clearly sooner goes first; otherwise the configured order stands.
+  const tied = cfg({ providers: { "claude-agent": { priority: 1 }, xai: { priority: 1 } } })
+  const chain = orderedChain(tied, "opus")
+  const ids = (order: number[]) => order.map((i) => chain[i].providerID)
+  assert.deepEqual(ids(fasterFirst(tied, chain)).slice(0, 2), ["claude-agent", "xai"])
+  assert.deepEqual(ids(fasterFirst(tied, chain, speedOf(health))).slice(0, 2), ["xai", "claude-agent"])
+  assert.deepEqual(ids(fasterFirst(tied, chain, speedOf({ ...health, xai: { ...health.xai, firstTokenMs: 900 } }))).slice(0, 2), ["claude-agent", "xai"], "within a fifth is not clearly faster")
+  assert.deepEqual(ids(fasterFirst(tied, chain, speedOf({ ...health, xai: { ...health.xai, timed: 2 } }))).slice(0, 2), ["claude-agent", "xai"], "too few timings to trust")
+  assert.deepEqual(ids(fasterFirst(config, orderedChain(config, "opus"), speedOf(health))), ids(fasterFirst(config, orderedChain(config, "opus"))), "different priorities are never reordered")
+  const p1 = { ...findInChains(tied, { providerID: "claude-agent", id: "opus" })!, variant: "medium" }
+  assert.equal(route({ config: tied, pools, models: MODELS, preferred: p1, mode: "turn", speed: speedOf(health) }).target?.providerID, "xai")
 })

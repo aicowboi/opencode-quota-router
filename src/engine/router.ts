@@ -61,6 +61,36 @@ export function mapVariant(entry: ModelRef, baseline: ModelRef | undefined, want
   return best
 }
 
+/**
+ * The order entries are tried in: the chain's own, except that where neighbouring entries belong to different
+ * providers of the same priority, a provider measured clearly faster (by a fifth or more) goes first.
+ */
+export function fasterFirst(config: Config, chain: ModelRef[], speed?: (entry: ModelRef) => number | undefined): number[] {
+  const order = [...chain.keys()]
+  if (!speed) return order
+  const rank = (ref: ModelRef) => config.providers[ref.providerID]?.priority ?? 99
+  const out: number[] = []
+  for (let i = 0; i < order.length; ) {
+    let j = i + 1
+    while (j < order.length && rank(chain[j]) === rank(chain[i])) j++
+    const group = order.slice(i, j)
+    const providers = [...new Set(group.map((k) => chain[k].providerID))]
+    if (providers.length > 1) {
+      const ms = new Map(providers.map((p) => [p, speed(chain[group.find((k) => chain[k].providerID === p)!])]))
+      const clearly = (a: string, b: string) => {
+        const x = ms.get(a)
+        const y = ms.get(b)
+        return x !== undefined && y !== undefined && x <= y * 0.8
+      }
+      providers.sort((a, b) => (clearly(a, b) ? -1 : clearly(b, a) ? 1 : 0))
+      group.sort((a, b) => providers.indexOf(chain[a].providerID) - providers.indexOf(chain[b].providerID) || a - b)
+    }
+    out.push(...group)
+    i = j
+  }
+  return out
+}
+
 export function route(input: {
   config: Config
   pools: PoolStore
@@ -72,12 +102,14 @@ export function route(input: {
   exclude?: Set<string>
   /** Policies that pass over an entry for reasons other than pool health (spend caps, schedules, project rules). */
   gate?: Gate
+  /** Time to first token per entry, where known. Only decides between providers given the same priority. */
+  speed?: (entry: ModelRef) => number | undefined
 }): RouteResult {
   const { config, pools, models, preferred } = input
   const chain = orderedChain(config, preferred.chain)
   // The model the user picked sets the chain and the effort level; priority order always decides the provider.
   const baseline = chain[preferred.index]
-  const order = [...chain.keys()]
+  const order = fasterFirst(config, chain, input.speed)
   const skipped: string[] = []
   let trial: { target: ModelRef; index: number } | undefined
   let reluctant: { target: ModelRef; index: number; usable: "yes" | "trial"; line: string } | undefined

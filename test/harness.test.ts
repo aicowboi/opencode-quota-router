@@ -286,7 +286,7 @@ test("store: rollups match raw rows, pagination and retention", async () => {
   const { Store, localDay } = await import("../src/db.ts")
   const m = await import("../src/maintenance.ts")
   const store = await Store.open(path.join(tmp, "big.db"))
-  assert.equal(store.meta("schema_version"), "5")
+  assert.equal(store.meta("schema_version"), "6")
   assert.equal(Number((store.get("PRAGMA auto_vacuum") as any).auto_vacuum), 2, "incremental auto-vacuum")
   const now = Date.now()
   const DAY = 86_400_000
@@ -895,4 +895,24 @@ test("plan advice: gathered from the local record of limits, usage checks and sp
   core.store.run("DELETE FROM usage_snapshots")
   core.store.run("DELETE FROM steps WHERE id = 'adv1'")
   ;(core as any).spendCache = undefined
+})
+
+test("recorder: time to first token is the first sign of an answer", () => {
+  const sid = "ses_first"
+  const t0 = Date.now() - 60_000
+  const at = (type: string, data: Record<string, unknown>, ms: number) => ({ ...evt(type, { sessionID: sid, ...data }), created: t0 + ms })
+  core.recorder.handle(at("session.execution.started", {}, 0))
+  core.recorder.handle(at("session.step.started", { assistantMessageID: "msg_f1", agent: "build", model: { providerID: "anthropic", id: "claude-opus-5-5" } }, 0))
+  core.recorder.handle(at("session.reasoning.started", { assistantMessageID: "msg_f1" }, 850))
+  core.recorder.handle(at("session.text.started", { assistantMessageID: "msg_f1" }, 2400))
+  core.recorder.handle(at("session.step.ended", { assistantMessageID: "msg_f1", finish: "stop", cost: 0, tokens: { input: 10, output: 10, reasoning: 0, cache: { read: 0, write: 0 } } }, 3000))
+  core.recorder.handle(at("session.execution.succeeded", {}, 3000))
+  const row: any = core.store.get("SELECT first_ms FROM steps WHERE session_id = ?", sid)
+  assert.equal(row.first_ms, 850)
+  ;(core as any).healthCache = undefined
+  const h = core.health()
+  assert.ok(h.anthropic.requests >= 1)
+  assert.equal(typeof h.anthropic.firstTokenMs, "number")
+  core.store.run("DELETE FROM steps WHERE session_id = ?", sid)
+  ;(core as any).healthCache = undefined
 })

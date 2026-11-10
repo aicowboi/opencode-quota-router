@@ -1,5 +1,6 @@
 // A health check of the whole setup: what is connected, what would be used, and what is likely to go wrong.
 // Read-only. Nothing here reads a credential, and paths are shown relative to the home directory.
+import { unreliable } from "./engine/health.ts"
 import { LOCAL_NAMES, localNote } from "./probes/local.ts"
 import { claudePlan } from "./engine/plans.ts"
 import fs from "node:fs"
@@ -85,6 +86,8 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   probe("probe-claude", "Claude", config.claude.usageProbe, core.hasProvider("claude-agent"), core.claude, "claude.usageProbe")
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
   probe("probe-openrouter", "OpenRouter", config.openrouter.usageProbe, core.hasProvider("openrouter"), core.openrouter, "openrouter.usageProbe")
+  for (const [id, h] of Object.entries(core.health(now)))
+    if (config.health.enabled && unreliable(config, h)) add({ id: `health-${id}`, status: "warn", title: `${id} is unreliable right now`, detail: `${h.failed} of its last ${h.requests} requests failed without a limit being the cause. Routing passes it over while another entry can run, and comes back as the failures age out.` })
   for (const [kind, l] of core.local) {
     const name = LOCAL_NAMES[kind]
     if (!l.data) continue

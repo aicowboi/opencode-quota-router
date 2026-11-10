@@ -44,6 +44,15 @@ export type Config = {
   billing: { probeAfterMs: number }
   onExhausted: { mode: "wait" | "fail"; maxWaitMs: number }
   contextFit: { safetyFactor: number }
+  health: {
+    /** Pass over a provider whose recent requests keep failing, while another entry can run. */
+    enabled: boolean
+    /** The period the error rate is judged over. */
+    windowMs: number
+    minRequests: number
+    /** The share of failed requests, 0 to 1, from which a provider counts as unreliable. */
+    maxErrorRate: number
+  }
   /**
    * Pace guard: subagents, and the agents listed, pass over a plan that is on pace to run out before it resets.
    * Needs the usage checks, which is where the pace comes from.
@@ -196,6 +205,7 @@ export const DEFAULTS: Config = {
   billing: { probeAfterMs: 6 * HOUR },
   onExhausted: { mode: "wait", maxWaitMs: 30 * 60_000 },
   contextFit: { safetyFactor: 1.15 },
+  health: { enabled: true, windowMs: 15 * 60_000, minRequests: 5, maxErrorRate: 0.5 },
   pace: { enabled: false, lightAgents: [] },
   claude: { usageProbe: false, avoidUsageCredits: true, cutoverAtPct: 98, warnAtPct: 85, plan: "" },
   copilot: { usageProbe: false, plan: "", avoidAdditionalCredits: true, reserveFraction: 0.01, monthlyCredits: 0, economyAtPct: 0, economyOutputPrice: 15 },

@@ -8,7 +8,7 @@ type Event = { id: string; type: string; created: number; data: Record<string, a
 export type LiveExecution = {
   sessionID: string
   startedAt: number
-  step?: { id: string; model: ModelRef; startedAt: number; agent?: string }
+  step?: { id: string; model: ModelRef; startedAt: number; agent?: string; first?: boolean }
   tools: Array<{ id: string; name: string; startedAt: number }>
   retry?: { attempt: number; at: number; error: string }
 }
@@ -85,6 +85,15 @@ export class Recorder {
     const d = ev.data ?? {}
     const sid: string | undefined = d.sessionID
     const at = ev.created ?? Date.now()
+
+    // The first sign of an answer, whether text, reasoning or a tool call, gives the time to first token.
+    if (ev.type === "session.text.started" || ev.type === "session.reasoning.started" || ev.type === "session.tool.input.started") {
+      const step = this.live.get(sid!)?.step
+      if (step && !step.first) {
+        step.first = true
+        this.store.run("UPDATE steps SET first_ms = ? WHERE id = ? AND first_ms IS NULL", Math.max(0, at - step.startedAt), step.id)
+      }
+    }
 
     switch (ev.type) {
       case "session.created":

@@ -175,6 +175,13 @@ export class Store {
         this.setMeta("schema_version", "5")
       })
     }
+    if (version < 6) {
+      this.transaction(() => {
+        // How long a request took to start answering.
+        this.addColumn("steps", "first_ms", "INTEGER")
+        this.setMeta("schema_version", "6")
+      })
+    }
   }
 
   private stmt(sql: string): Statement {

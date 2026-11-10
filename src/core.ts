@@ -12,6 +12,7 @@ import { estimate } from "./engine/pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
 import { fetchCopilotUser, findGithubToken, interpretCopilot, type CopilotQuota } from "./probes/copilot.ts"
 import { fetchLocal, LOCAL_NAMES, type LocalHealth, type LocalKind } from "./probes/local.ts"
+import { healthGate, speedOf, summariseHealth, type ProviderHealth } from "./engine/health.ts"
 import { learnPool, type LearnedPool, type PoolSpend } from "./engine/learn.ts"
 import { fetchOpenRouterKey, findOpenRouterKey, interpretOpenRouter, type OpenRouterCredit } from "./probes/openrouter.ts"
 import { markDirty, optimize, prune, refreshSessions, rollupDirty } from "./maintenance.ts"
@@ -228,6 +229,7 @@ export class Core {
     () => spendGate(this.config, this.spend(), Date.now()),
     () => saveGate(this.saved(), Date.now()),
     () => downGate(this.localDown()),
+    () => healthGate(this.config, this.health()),
     () => economyGate(this.config, this.copilot.data && this.copilot.data.entitlement > 0 ? (this.copilot.data.used / this.copilot.data.entitlement) * 100 : undefined, this.models),
     (s) => (this.config.pace.enabled && s && this.isLight(s) ? paceGate(this.config, this.forecasts(), true, Date.now()) : undefined),
   ]
@@ -235,6 +237,26 @@ export class Core {
   /** Light work for the pace guard: a subagent's session, or a session run by one of the agents listed. */
   isLight(s: SessionState) {
     return Boolean(s.parentID) || (s.agent !== undefined && this.config.pace.lightAgents.includes(s.agent))
+  }
+
+  private healthCache?: { at: number; health: Record<string, ProviderHealth> }
+
+  /** Time to first token over the last hour and the error rate over `health.windowMs`, per provider. */
+  health(now = Date.now()): Record<string, ProviderHealth> {
+    const c = this.healthCache
+    if (c && now - c.at < 10_000 && now >= c.at) return c.health
+    const rows = this.store.all<{ p: string; at: number; status: string; first_ms: number | null; error_type: string | null }>(
+      "SELECT provider_id AS p, COALESCE(ended_at, started_at) AS at, status, first_ms, error_type FROM steps WHERE started_at >= ? AND kind = 'primary' AND status IN ('ok', 'failed') AND provider_id IS NOT NULL",
+      now - Math.max(3_600_000, this.config.health.windowMs),
+    )
+    const health = summariseHealth(rows.map((r) => ({ providerID: r.p, at: r.at, ok: r.status === "ok", firstMs: r.first_ms ?? undefined, errorType: r.error_type ?? undefined })), now, this.config.health.windowMs)
+    this.healthCache = { at: now, health }
+    return health
+  }
+
+  /** For `route`: which of two providers of the same priority starts answering sooner. */
+  speed() {
+    return speedOf(this.health())
   }
 
   /** Local servers seen not running at a check recent enough to trust. */
