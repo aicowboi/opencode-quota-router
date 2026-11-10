@@ -636,3 +636,60 @@ test("save for later: routing passes a saved provider over until its time or unt
   }
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
 })
+
+test("agent chains: an agent's sessions use its chain until the user picks a model", async () => {
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  const grok = { providerID: "xai", id: "grok-4.7", variant: "low" }
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  assert.deepEqual(core.setSetting("chains.quick", ["xai/grok-4.7#low", "openai/gpt-6.1-sol#low"]), { ok: true })
+  assert.deepEqual(core.setSetting("agents.plan", "quick"), { ok: true })
+  assert.equal(core.setSetting("agents.plan", "no-such-chain").ok, false)
+
+  // A session created for the agent moves to its chain straight away, whatever model it was created with.
+  const sid = "ses_agent"
+  harness.sessionModels.set(sid, opus)
+  await onEvent(core, evt("session.created", { sessionID: sid, model: opus, agent: "plan" }))
+  await flush()
+  const s = core.session(sid)
+  assert.equal(s.preferred.chain, "quick")
+  assert.equal(s.byAgent, true)
+  assert.deepEqual(harness.calls.switches.at(-1), { sessionID: sid, model: grok })
+  const row: any = core.store.get("SELECT trigger, evidence FROM routing WHERE session_id = ? ORDER BY rowid DESC LIMIT 1", sid)
+  assert.deepEqual({ ...row }, { trigger: "route", evidence: "The plan agent uses the quick chain" })
+
+  // A limit moves it along the agent's chain, not the chain of the model the session started on.
+  core.pools.report({ kind: "window", pools: ["xai"], resetAt: Date.now() + 3_600_000, evidence: "limit" })
+  await onPrompt(core, { sessionID: sid })
+  await flush()
+  assert.deepEqual(harness.calls.switches.at(-1), { sessionID: sid, model: { providerID: "openai", id: "gpt-6.1-sol", variant: "low" } })
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+
+  // Another agent, and a subagent's session, keep the chain of their model.
+  await onEvent(core, evt("session.created", { sessionID: "ses_agent_build", model: opus, agent: "build" }))
+  await onEvent(core, evt("session.created", { sessionID: "ses_agent_child", model: opus, agent: "plan", parentID: sid }))
+  assert.equal(core.session("ses_agent_build").preferred.chain, "opus")
+  assert.equal(core.session("ses_agent_child").preferred.chain, "opus")
+
+  // Picking a model outranks the agent's chain, and is remembered.
+  await onEvent(core, evt("session.model.selected", { sessionID: sid, model: opus }))
+  assert.equal(s.preferred.chain, "opus")
+  assert.equal(s.byAgent, false)
+  core.sessions.delete(sid)
+  const again = core.session(sid)
+  core.setAgent(again, "plan")
+  assert.equal(again.picked, true)
+  assert.equal(again.preferred.chain, "opus")
+  // Selecting the agent again applies its chain once more.
+  await onEvent(core, evt("session.agent.selected", { sessionID: sid, agent: "plan", previous: "build" }))
+  assert.equal(again.preferred.chain, "quick")
+
+  // Removing the rule returns sessions to the chain of the model they are on.
+  again.current = opus
+  assert.deepEqual(core.setSetting("agents.plan", undefined), { ok: true })
+  assert.equal(again.byAgent, false)
+  assert.equal(again.preferred.chain, "opus")
+  assert.deepEqual(core.config.agents, {})
+  assert.deepEqual(core.setSetting("chains.quick", undefined), { ok: true })
+  for (const id of [sid, "ses_agent_build", "ses_agent_child"]) core.sessions.delete(id)
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+})

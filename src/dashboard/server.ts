@@ -106,6 +106,7 @@ export function buildState(core: Core) {
     suggestions: core.suggestions(),
     added: core.chainAdditions(),
     live,
+    agents: core.config.agents,
     chains: Object.fromEntries(Object.keys(core.config.chains).map((name) => [name, orderedChain(core.config, name).map(refLabel)])),
     warnings: core.warnings,
   }

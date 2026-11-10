@@ -104,7 +104,7 @@ function statusText(core: Core, sessionID: string): string {
   const lines = [`quota-router ${VERSION}${core.paused ? " (paused)" : ""}${core.config.dryRun ? " (dry run)" : ""}`]
   if (core.dashboardURL) lines.push(`Dashboard: ${core.dashboardURL}`)
   if (s?.preferred) {
-    lines.push(`This session: ${s.current ? refLabel(s.current) : "?"} (preferred ${refLabel(s.preferred.model)}, chain ${s.preferred.chain}${s.pinned ? ", pinned" : ""})`)
+    lines.push(`This session: ${s.current ? refLabel(s.current) : "?"} (preferred ${refLabel(s.preferred.model)}, chain ${s.preferred.chain}${s.byAgent ? ` from the ${s.agent} agent` : ""}${s.pinned ? ", pinned" : ""})`)
     lines.push(`Chain: ${orderedChain(core.config, s.preferred.chain).map(refLabel).join(" → ")}`)
   } else lines.push("This session's model is in no chain, so it is not routed.")
   for (const [id, until] of Object.entries(core.saved())) lines.push(`- ${id}: saved for later until ${new Date(until).toLocaleString()}`)
@@ -150,7 +150,7 @@ export default {
     await ctx.command.transform((editor: any) => {
       editor.add({
         name: "router",
-        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | save <provider> [2h|17:00|off] | doctor | telemetry on|off",
+        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | save <provider> [2h|17:00|off] | agent <name> <chain|off> | doctor | telemetry on|off",
         execute: async (input: { sessionID: string; prompt: { text?: string } }) => {
           const { sessionID, prompt } = input
           core.log.info("command", { sessionID, text: prompt?.text })
@@ -184,6 +184,21 @@ export default {
               const on = arg !== "off"
               const r = core.setSetting("dryRun", on)
               text = !r.ok ? r.error : on ? "Dry run is on: routing decisions are recorded on the dashboard, and no session is moved." : "Dry run is off: routing is live again."
+              break
+            }
+            case "agent": {
+              // `/router agent plan fast` runs the plan agent's sessions on the fast chain; `/router agent plan off` ends it.
+              const rules = Object.entries(core.config.agents).map(([a, c]) => `${a} → ${c}`)
+              if (!arg) {
+                text = rules.length ? `Agent chains: ${rules.join("; ")}.` : `No agent has its own chain. Use /router agent <name> <chain>. Chains: ${Object.keys(core.config.chains).join(", ")}.`
+                break
+              }
+              if (!/^[\w-]+$/.test(arg) || !arg2) {
+                text = `Use /router agent <name> <chain|off>. Chains: ${Object.keys(core.config.chains).join(", ")}.`
+                break
+              }
+              const r = core.setSetting(`agents.${arg}`, arg2 === "off" ? undefined : arg2)
+              text = !r.ok ? r.error : arg2 === "off" ? `The ${arg} agent no longer has its own chain here. A rule in opencode.jsonc still applies.` : `Sessions run by the ${arg} agent now use the ${arg2} chain, unless you pick a model in the session.`
               break
             }
             case "save": {

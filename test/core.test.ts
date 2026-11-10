@@ -318,3 +318,15 @@ test("save for later: a saved provider is gated until its time, and spans parse"
   assert.equal(parseUntil("9:30", NOW), new Date(2026, 10, 10, 9, 30, 0).getTime())
   for (const bad of ["", "0h", "8d", "-2h", "25:00", "12:75", "soon", "2w"]) assert.equal(parseUntil(bad, NOW), undefined, bad)
 })
+
+test("agent chains: an agent maps to a chain that exists", () => {
+  assert.deepEqual(cfg().agents, {})
+  const chain = Object.keys(cfg().chains)[0]
+  const { config, warnings } = loadConfig({ agents: { plan: chain, build: "no-such-chain", review: 3, off: null, __proto__: chain } })
+  assert.deepEqual(config.agents, { plan: chain })
+  assert.deepEqual(warnings, ["agents.build: there is no chain named no-such-chain; ignored", "agents.review should be the name of a chain; ignored"])
+  assert.deepEqual(loadConfig({ agents: ["plan"] }).warnings, ["agents should be an object of agent: chain; ignored"])
+  // A stored setting is checked the same way.
+  assert.equal(checkSetting({}, {}, "agents.plan", chain).ok, true)
+  assert.deepEqual(checkSetting({}, {}, "agents.plan", "no-such-chain"), { ok: false, error: "agents.plan: there is no chain named no-such-chain; ignored" })
+})

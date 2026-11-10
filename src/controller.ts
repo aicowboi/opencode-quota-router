@@ -103,7 +103,9 @@ export async function onPrompt(core: Core, e: { sessionID: string; metadata?: Re
         : `${refLabel(r.target)} is available again`
       : r.skipped.length
         ? r.skipped.join("; ")
-        : undefined
+        : s.byAgent && trigger === "route"
+          ? `The ${s.agent} agent uses the ${s.preferred.chain} chain`
+          : undefined
   if (core.config.dryRun) {
     const key = `${trigger} ${refLabel(r.target)}`
     if (s.dryLast === key) return
@@ -124,6 +126,13 @@ export async function onEvent(core: Core, ev: { id: string; type: string; create
         s.current = d.model
         s.preferred ??= core.preferredFor(d.model)
       }
+      core.setAgent(s, d.agent)
+      // An agent with its own chain starts on that chain, not on the model the session was created with.
+      if (s.byAgent) void onPrompt(core, { sessionID: s.id })
+      return
+    }
+    case "session.agent.selected": {
+      core.setAgent(core.session(sid!), d.agent, true)
       return
     }
     case "session.model.selected": {
@@ -137,6 +146,8 @@ export async function onEvent(core: Core, ev: { id: string; type: string; create
       // A change we did not make is the user's choice: it sets the session's chain and effort level.
       s.current = d.model
       s.fallback = undefined
+      s.picked = true
+      s.byAgent = false
       s.preferred = core.preferredFor(d.model)
       core.savePrefs(s)
       core.recordRouting({ sessionID: sid, trigger: "manual", to: d.model, from: d.previous, evidence: s.preferred ? `Routing follows the ${s.preferred.chain} chain (use /router pin to stay on this provider)` : "Model is in no chain; routing paused for this session" })
@@ -148,6 +159,7 @@ export async function onEvent(core: Core, ev: { id: string; type: string; create
       s.stepModel = d.model
       s.current = d.model
       if (!s.preferred && !s.pinned && d.model?.providerID && !core.store.get("SELECT 1 FROM session_prefs WHERE id = ?", sid)) s.preferred = core.preferredFor(d.model)
+      core.setAgent(s, d.agent)
       return
     }
     case "session.step.ended": {

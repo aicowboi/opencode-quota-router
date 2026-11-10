@@ -6,6 +6,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
+- Chains per agent (`agents`): `"agents": { "plan": "sonnet" }` or `/router agent plan sonnet` runs an agent's sessions on a chain of your choice.
 - Save for later: `/router save <provider> 2h` (or "Save for 2 hours" on the dashboard) sets a provider aside until a time, so routing passes it over and its allowance is kept for when you want it.
 - Dry run: `/router dry-run on` records what routing would do, as "Would: …" rows in the routing log, without moving a session or changing a retry.
 - OpenTelemetry export (`telemetry`): tokens, costs, requests, fallbacks, time limited and plan utilisation as OTLP/HTTP JSON metrics, and optionally one log record per limit, switch and recovery. Off by default; identity and project attributes are opt-in; the standard `OTEL_*` variables are honoured. See `docs/telemetry.md`.

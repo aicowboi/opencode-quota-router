@@ -170,6 +170,8 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 - **When everything is limited,** the request waits for the earliest reset, up to 30 minutes per retry. A failed session is continued once at that reset, if nothing else happened in it.
 - **Your choice of model** sets the chain and effort level. Routing still uses the highest-priority provider with capacity; use `/router pin` to keep one session on one provider.
 
+**Want an agent on a cheaper chain?** `"agents": { "plan": "sonnet" }` (or `/router agent plan sonnet`) runs every session of the `plan` agent on the `sonnet` chain: the session moves to that chain's first available entry when it starts, and falls back along that chain. Picking a model yourself in a session outranks the rule for that session, until you select the agent again. This applies to the agent a session runs as. Subagents run on their parent session's model, and compaction and session titles run on the session's model; OpenCode does not let a plugin change those yet.
+
 **Want to keep a plan for later?** `/router save claude 2h` sets the Claude subscription aside for two hours, so what is left of its allowance is there for the work you want it for. Routing passes a saved provider over as if it were limited: sessions on it move to the next entry in their chain at their next turn, and return when the time is up or when you run `/router save claude off`. The dashboard has the same control on each subscription ("Save for 2 hours" and "Use now"). A saved provider stays saved across restarts. If every other entry in a chain is limited, the session waits; it does not fall back onto the provider you saved.
 
 ## Dashboard and menu bar
@@ -204,6 +206,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 | `/router resume` | Resume routing for every session |
 | `/router dry-run on` / `off` | Record what routing would do without moving any session |
 | `/router save <provider> [2h]` | Set a provider aside for later: routing passes it over for `90m`, `2h`, `1d` or until a time such as `17:00` (two hours if left out, a week at most). `/router save <provider> off` ends it, `/router save off` ends all, `/router save` lists them |
+| `/router agent <name> <chain>` | Run one agent's sessions on a chain, for example `/router agent plan sonnet`. `/router agent <name> off` ends it, `/router agent` lists them |
 | `/router doctor` | Run the health check and open it on the dashboard |
 | `/router telemetry on` / `off` | Turn the OpenTelemetry export on or off (the endpoint comes from `opencode.jsonc` or `OTEL_*`) |
 
@@ -219,6 +222,7 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `providers.<id>.priority` | 1–5 as above | Lower is tried first. Chains are sorted by it. |
 | `providers.<id>.allow` | `always` | `never` keeps a provider out of routing |
 | `chains.<name>` | see above | A list of `provider/model#variant` replaces the chain; an object of `provider: model` (or `null`) changes single entries; `null` removes the chain |
+| `agents.<name>` | none | The chain an agent's sessions use, for example `"agents": { "plan": "sonnet" }`. Without an entry, the session's model decides the chain |
 | `providers.<id>.kind` | detected | `subscription`, `metered` or `local`; set it to override what discovery detects |
 | `discovery.enabled` | true | Rank and show every connected provider, not only the ones listed here |
 | `chatgpt.cutoverAtPct` / `warnAtPct` | 98 / 85 | Leave a ChatGPT plan before its 5-hour or weekly window is spent |

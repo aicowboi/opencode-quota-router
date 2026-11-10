@@ -825,7 +825,7 @@ async function refreshState() {
     state = await api("/api/state")
     renderMast(); renderLadder(); renderNow()
     $("footer").innerHTML = "Quota Router " + esc(state.version) + " · running since " + esc(fmtWhen(state.started)) + " · local only, stored in ~/.local/share/opencode-quota-router<br>" +
-      Object.entries(state.chains).map(([k, v]) => "<span class='soft'>" + esc(k) + "</span> " + v.map(esc).join(" → ")).join("<br>")
+      Object.entries(state.chains).map(([k, v]) => "<span class='soft'>" + esc(k) + "</span> " + v.map(esc).join(" → ") + Object.entries(state.agents || {}).filter(([, c]) => c === k).map(([a]) => " · used by the " + esc(a) + " agent").join("")).join("<br>")
   } catch (e) { $("headline").textContent = "Can't reach the plugin. Is OpenCode running?" }
 }
 

@@ -16,7 +16,7 @@ import type { CodexWindow } from "./engine/headers.ts"
 import { Recorder } from "./recorder.ts"
 import { Telemetry } from "./telemetry/exporter.ts"
 import { nextMonthUtc } from "./engine/resets.ts"
-import { findInChains, type Preferred } from "./engine/router.ts"
+import { findInChains, orderedChain, type Preferred } from "./engine/router.ts"
 import type { ModelInfo, ModelRef, PoolState, Signal, Tokens } from "./engine/types.ts"
 
 export const VERSION = "0.1.0"
@@ -35,6 +35,12 @@ export type SessionState = {
   resumes: number[]
   deferred?: { at: number; executionEventID: string }
   parentID?: string
+  /** The agent the session runs as, when known. */
+  agent?: string
+  /** The user chose a model in this session, which outranks the chain configured for its agent. */
+  picked?: boolean
+  /** `preferred` comes from the chain configured for the session's agent. */
+  byAgent?: boolean
   /** Dry run: the last move suggested at a turn, so the same suggestion is not recorded again every turn. */
   dryLast?: string
   /** Set while the session runs on a fallback; cleared when it returns or the user picks a model. */
@@ -133,7 +139,10 @@ export class Core {
     this.warnings = warnings
     this.pools.setConfig(this.config)
     // Chains and ranks may have changed: re-resolve each session's preference.
-    for (const s of this.sessions.values()) if (s.preferred) s.preferred = this.preferredFor(s.preferred.model)
+    for (const s of this.sessions.values()) {
+      if (s.preferred && !s.byAgent) s.preferred = this.preferredFor(s.preferred.model)
+      this.prefer(s)
+    }
     this.notify("config")
   }
 
@@ -386,6 +395,37 @@ export class Core {
     return found ? { ...found, variant: model.variant, model } : undefined
   }
 
+  /**
+   * Apply the chain configured for the session's agent: the session then prefers that chain's first entry, whatever
+   * model it started on. A model the user picked in the session outranks it, and subagent sessions are left alone
+   * because they run on their parent's model.
+   */
+  prefer(s: SessionState): boolean {
+    const chain = s.agent && !s.picked && !s.parentID && Object.hasOwn(this.config.agents, s.agent) ? this.config.agents[s.agent] : undefined
+    const first = chain ? orderedChain(this.config, chain)[0] : undefined
+    if (chain && first) {
+      s.preferred = { chain, index: 0, variant: first.variant, model: first }
+      s.byAgent = true
+      return true
+    }
+    if (s.byAgent) {
+      s.byAgent = false
+      s.preferred = s.current ? this.preferredFor(s.current) : undefined
+    }
+    return false
+  }
+
+  /** Note the agent a session runs as. A newly selected agent's chain applies even after an earlier model pick. */
+  setAgent(s: SessionState, agent: unknown, selected = false) {
+    if (typeof agent !== "string" || !agent || (agent === s.agent && !selected)) return
+    s.agent = agent
+    if (selected && s.picked && Object.hasOwn(this.config.agents, agent)) {
+      s.picked = false
+      this.savePrefs(s)
+    }
+    this.prefer(s)
+  }
+
   session(id: string): SessionState {
     let s = this.sessions.get(id)
     if (!s) {
@@ -396,6 +436,8 @@ export class Core {
           const d = JSON.parse(saved.data)
           s.pinned = d.pinned === true
           if (d.preferred?.providerID) s.preferred = this.preferredFor(d.preferred)
+          // Before agent chains existed, a stored preference was always the user's own pick.
+          s.picked = d.picked === undefined ? Boolean(d.preferred?.providerID) : d.picked === true
         } catch {}
       }
       this.sessions.set(id, s)
@@ -406,7 +448,7 @@ export class Core {
   savePrefs(s: SessionState) {
     this.store.run(
       "INSERT INTO session_prefs (id, data, updated) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated = excluded.updated",
-      s.id, JSON.stringify({ pinned: s.pinned, preferred: s.preferred?.model }), Date.now(),
+      s.id, JSON.stringify({ pinned: s.pinned, preferred: s.byAgent ? undefined : s.preferred?.model, picked: s.picked === true }), Date.now(),
     )
   }
 
@@ -422,6 +464,7 @@ export class Core {
         s.current = model
         s.preferred = this.preferredFor(model)
       }
+      this.setAgent(s, info?.agent)
     } catch (error) {
       this.log.debug("session get failed", { sessionID: s.id, error: String(error) })
     }

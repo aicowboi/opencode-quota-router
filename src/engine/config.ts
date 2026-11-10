@@ -28,6 +28,8 @@ export type Config = {
   providers: Record<string, ProviderConfig>
   /** Ordered equivalents, best first. Entries are `provider/model#variant`. */
   chains: Record<string, ModelRef[]>
+  /** The chain an agent's sessions use, by agent name. Without an entry, the session's model decides the chain. */
+  agents: Record<string, string>
   recovery: { skewMs: number }
   throttle: { maxWaitMs: number; inPlaceRetries: number; cooldownMs: number; maxCooldownMs: number }
   overload: { inPlaceRetries: number; cooldownMs: number; maxCooldownMs: number }
@@ -149,6 +151,7 @@ export const DEFAULTS: Config = {
     openai: { priority: 5, kind: "metered", allow: "always", windowCooldownMs: 30 * 60_000 },
   },
   chains: Object.fromEntries(Object.entries(DEFAULT_CHAINS).map(([k, v]) => [k, v.map(parseRef)])),
+  agents: {},
   recovery: { skewMs: 60_000 },
   throttle: { maxWaitMs: 20_000, inPlaceRetries: 2, cooldownMs: 60_000, maxCooldownMs: 10 * 60_000 },
   overload: { inPlaceRetries: 2, cooldownMs: 2 * 60_000, maxCooldownMs: 10 * 60_000 },
@@ -257,7 +260,9 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
   const opts = isObject(options) ? { ...options } : {}
   const rawChains = opts.chains
   const rawProviders = opts.providers
+  const rawAgents = opts.agents
   delete opts.chains
+  delete opts.agents
   delete opts.providers
   delete opts.explicitProviders
   // Per-provider caps are keyed by provider ID, so they are read separately from the fixed options.
@@ -356,5 +361,15 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
       config.chains[name] = refs
     }
   }
+
+  config.agents = {}
+  if (isObject(rawAgents)) {
+    for (const [agent, chain] of Object.entries(rawAgents)) {
+      if (UNSAFE_KEYS.has(agent) || chain === null) continue
+      if (typeof chain !== "string") warnings.push(`agents.${agent} should be the name of a chain; ignored`)
+      else if (!Object.hasOwn(config.chains, chain)) warnings.push(`agents.${agent}: there is no chain named ${chain}; ignored`)
+      else config.agents[agent] = chain
+    }
+  } else if (rawAgents !== undefined) warnings.push("agents should be an object of agent: chain; ignored")
   return { config, warnings }
 }
