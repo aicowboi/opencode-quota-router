@@ -93,7 +93,8 @@ export class Core {
   connections = new Map<string, ConnectionMethod | undefined>()
   /** Called when the ChatGPT sign-in becomes active, to start reading its headers. */
   onChatgpt = new Set<() => Promise<void> | void>()
-  private options: unknown
+  /** The plugin options from opencode.jsonc, before stored settings are laid over them. */
+  options: unknown
   dashboardURL?: string
   private listeners = new Set<(kinds: string[]) => void>()
   private pendingKinds = new Set<string>()

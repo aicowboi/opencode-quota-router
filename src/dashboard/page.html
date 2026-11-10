@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
+<meta name="qr-token" content="__QR_TOKEN__">
 <title>Quota Router</title>
 <style>
 /* Palette: warm graphite with muted, earthy provider colours. Colour carries meaning (provider, state), never decoration.
@@ -129,6 +130,25 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.005em }
 .child { padding-left: 20px; border-left: 1px solid var(--line); margin-left: 4px }
 .elapsed { font-weight: 500 }
 .empty { color: var(--muted); padding: 18px 0; font-size: 13px }
+/* Settings view: shown instead of the dashboard sections while the address ends in #settings. */
+body.settings-view main > :not(#settings) { display: none }
+#settings fieldset { border: 0; border-top: 1px solid var(--line); margin: 0; padding: 18px 0 10px }
+#settings legend { font-weight: 600; padding: 0 0 4px; float: left; width: 100% }
+#settings legend + * { clear: both }
+#settings .ghelp { color: var(--muted); font-size: 12.5px; margin: 0 0 8px }
+.set { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 2px 24px; padding: 9px 0; align-items: start }
+.set + .set { border-top: 1px dashed var(--line) }
+.set label { color: var(--text) }
+.set .help, .set .was { color: var(--muted); font-size: 12.5px; grid-column: 1 }
+.set .ctl { grid-column: 2; grid-row: 1 / span 3; display: flex; gap: 8px; align-items: center; flex-wrap: wrap }
+.set input[type=number], .set input[type=text], .set select { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; padding: 4px 8px; min-width: 0 }
+.set input[type=number] { width: 96px; text-align: right }
+.set input[type=text] { width: 100% }
+.set input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--ok) }
+.set .unit { color: var(--muted); font-size: 12.5px }
+.set .err { color: var(--bad); font-size: 12.5px; grid-column: 1 / -1 }
+.set [aria-invalid=true] { border-color: var(--bad) }
+@media (max-width: 720px) { .set { grid-template-columns: 1fr } .set .ctl { grid-column: 1; grid-row: auto } }
 
 /* Disclosure groups */
 .disc { border-bottom: 1px solid var(--line) }
@@ -264,6 +284,12 @@ footer { padding: 36px 0 48px; color: var(--muted); font-size: 12px; line-height
   <section aria-labelledby="h-advice" id="advice">
     <div class="sec-head"><h2 id="h-advice">Plan advice</h2><span class="caption" id="adviceCaption">Whether each subscription fits how you used it</span><span class="spacer"></span><button class="more" id="adviceRun">Work it out</button></div>
     <div id="adviceList"></div>
+  </section>
+
+  <section aria-labelledby="h-settings" id="settings" hidden>
+    <div class="sec-head"><h2 id="h-settings">Settings</h2><span class="caption">Changes apply at once and are kept by the plugin. Your opencode.jsonc is never written to; Reset goes back to what it says.</span><span class="spacer"></span><a class="linkish" href="#">Back to the dashboard</a></div>
+    <form id="settingsForm" novalidate></form>
+    <p class="muted" id="settingsLocked"></p>
   </section>
 
   <section aria-labelledby="h-doctor" id="doctor">
@@ -402,6 +428,7 @@ function renderMast() {
 function renderMenu() {
   const m = $("menu")
   m.innerHTML = '<button data-a="probe">Check usage now</button><button data-a="pause">' + (state && state.paused ? "Resume routing" : "Pause routing") + '</button><button data-a="dry">' + (state && state.dryRun ? "End dry run" : "Start a dry run") + "</button><hr>" +
+    '<a href="#settings">Settings</a><hr>' +
     '<div class="label">Export as CSV (' + esc(RANGE_TEXT[range]) + ")</div>" +
     [["steps", "Requests"], ["sessions", "Sessions"], ["daily", "Daily totals"], ["routing", "Routing changes"], ["executions", "Executions"]]
       .map(([t, l]) => '<a href="/api/export.csv?table=' + t + "&range=" + range + '">' + l + "</a>").join("")
@@ -952,6 +979,70 @@ async function loadSessions() {
 }
 
 // ---------- loading ----------
+// ---------- settings ----------
+const TOKEN = document.querySelector('meta[name="qr-token"]').content
+let settings = null
+const shown = (f, v) => v === undefined || v === null ? "" : f.type === "number" && f.scale ? Math.round(v / f.scale * 1000) / 1000 : v
+const describe = (f, v) => f.type === "bool" ? (v ? "on" : "off") : f.type === "choice" ? ((f.options.find((o) => o[0] === v) || [])[1] || v) : v === "" || v === undefined ? "empty" : shown(f, v) + (f.unit ? " " + f.unit : "")
+function settingRow(f) {
+  const id = "set-" + f.path.replace(/\W/g, "-"), v = shown(f, f.value), help = f.help ? '<div class="help" id="' + id + '-help">' + esc(f.help) + "</div>" : ""
+  const describedby = ' aria-describedby="' + [f.help ? id + "-help" : "", id + "-was", id + "-err"].filter(Boolean).join(" ") + '"'
+  let ctl
+  if (f.type === "bool") ctl = '<input type="checkbox" id="' + id + '"' + (f.value ? " checked" : "") + describedby + ">"
+  else if (f.type === "choice") ctl = '<select id="' + id + '"' + describedby + ">" + f.options.map(([val, label]) => '<option value="' + esc(val) + '"' + (val === f.value ? " selected" : "") + ">" + esc(label) + "</option>").join("") + "</select>"
+  else if (f.type === "text") ctl = '<input type="text" id="' + id + '" value="' + esc(v) + '" maxlength="' + (f.max || 256) + '" autocomplete="off" spellcheck="false"' + describedby + ">"
+  else ctl = '<input type="number" id="' + id + '" value="' + esc(v) + '"' + (f.min !== undefined ? ' min="' + f.min + '"' : "") + (f.max !== undefined ? ' max="' + f.max + '"' : "") + ' step="' + (f.step || "any") + '" inputmode="decimal"' + describedby + ">" + (f.unit ? '<span class="unit">' + esc(f.unit) + "</span>" : "")
+  const reset = f.changed ? '<button type="button" class="btn-sm" data-reset="' + esc(f.path) + '" aria-label="Reset ' + esc(f.label) + ' to the opencode.jsonc value">Reset</button>' : ""
+  return '<div class="set" data-path="' + esc(f.path) + '"><label for="' + id + '">' + esc(f.label) + "</label>" + help +
+    '<div class="was" id="' + id + '-was">' + (f.changed ? "Changed here · opencode.jsonc: " + esc(describe(f, f.configured)) : "") + "</div>" +
+    '<div class="ctl">' + ctl + reset + '</div><div class="err" id="' + id + '-err" role="alert"></div></div>'
+}
+function renderSettings() {
+  if (!settings) return
+  $("settingsForm").innerHTML = settings.groups.map((g) => '<fieldset><legend>' + esc(g.title) + "</legend>" + (g.help ? '<p class="ghelp">' + esc(g.help) + "</p>" : "") + g.fields.map(settingRow).join("") + "</fieldset>").join("")
+  $("settingsLocked").textContent = "Set in opencode.jsonc only: " + settings.locked.join(", ") + "."
+  const fields = Object.fromEntries(settings.groups.flatMap((g) => g.fields.map((f) => [f.path, f])))
+  for (const row of $("settingsForm").querySelectorAll(".set")) {
+    const f = fields[row.dataset.path], input = row.querySelector("input, select")
+    input.onchange = () => {
+      const raw = f.type === "bool" ? input.checked : f.type === "number" ? (input.value === "" ? NaN : Number(input.value)) : input.value
+      saveSetting(f, row, raw)
+    }
+    const r = row.querySelector("[data-reset]")
+    if (r) r.onclick = () => saveSetting(f, row, null)
+  }
+}
+async function saveSetting(f, row, value) {
+  const err = row.querySelector(".err"), input = row.querySelector("input, select")
+  let res = null
+  try {
+    const r = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json", "x-quota-router": "1", "x-quota-router-token": TOKEN }, body: JSON.stringify({ path: f.path, value: Number.isNaN(value) ? "" : value }) })
+    res = await r.json().catch(() => null)
+    if (!res) res = { error: "The plugin did not answer" }
+  } catch { res = { error: "Can't reach the plugin. Is OpenCode running?" } }
+  if (res.ok) {
+    // Re-drawn with the stored values; keep the keyboard where it was.
+    const at = document.activeElement && document.activeElement.closest && document.activeElement.closest(".set")
+    settings = res.settings; renderSettings()
+    const back = at && document.querySelector('.set[data-path="' + CSS.escape(at.dataset.path) + '"] input, .set[data-path="' + CSS.escape(at.dataset.path) + '"] select')
+    if (back) back.focus()
+    announce(f.label + (value === null ? " reset to the opencode.jsonc value." : " saved."))
+    refreshState()
+  } else {
+    err.textContent = res.error || "Not saved"
+    input.setAttribute("aria-invalid", "true")
+  }
+}
+async function loadSettings() { settings = await api("/api/settings"); renderSettings() }
+function route() {
+  const on = location.hash === "#settings"
+  document.body.classList.toggle("settings-view", on)
+  $("settings").hidden = !on
+  if (on) { loadSettings().then(() => { $("h-settings").setAttribute("tabindex", "-1"); $("h-settings").focus() }).catch(() => {}); document.title = "Settings · Quota Router" }
+  else document.title = "Quota Router"
+}
+addEventListener("hashchange", route)
+
 async function refreshState() {
   try {
     state = await api("/api/state")
@@ -991,7 +1082,7 @@ setInterval(() => { tick(); if (state) renderMast() }, 1000)
 setInterval(refreshState, 15000)
 let resizeTimer = null
 addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (series) renderChart() }, 150) })
-refreshState().then(refreshRange); connect()
+refreshState().then(refreshRange); connect(); route()
 </script>
 </body>
 </html>

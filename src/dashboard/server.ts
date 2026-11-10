@@ -9,6 +9,7 @@ import { VERSION, type Core } from "../core.ts"
 import { planAdvice } from "../advisor.ts"
 import { runDoctor } from "../doctor.ts"
 import { buildStatus } from "../status.ts"
+import { applySetting, buildSettings, TOKEN, writeAllowed } from "./settings.ts"
 import { claudePlan } from "../engine/plans.ts"
 import { orderedChain } from "../engine/router.ts"
 import fs from "node:fs"
@@ -18,7 +19,8 @@ import * as q from "./queries.ts"
 
 const PAGE_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "page.html")
 /** Read on each request (it is small), so design changes show on reload. */
-const page = () => fs.readFileSync(PAGE_FILE, "utf8")
+// The page carries this process's write token; only a page served from here can read it.
+const page = () => fs.readFileSync(PAGE_FILE, "utf8").replace("__QR_TOKEN__", TOKEN)
 
 /** Compact status for the macOS menu bar. */
 /** A model reference as sent by the dashboard: provider/model, with an optional #effort. */
@@ -139,6 +141,21 @@ const json = (res: http.ServerResponse, body: unknown, status = 200) => {
   res.end(JSON.stringify(body))
 }
 
+/** A JSON object body of at most 16 KB, or undefined. */
+async function readBody(req: http.IncomingMessage): Promise<Record<string, any> | undefined> {
+  let body = ""
+  for await (const chunk of req) {
+    body += chunk
+    if (body.length > 16_384) return undefined
+  }
+  try {
+    const v = JSON.parse(body || "{}")
+    return v && typeof v === "object" && !Array.isArray(v) ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
 type Handler = (req: http.IncomingMessage, res: http.ServerResponse) => Promise<unknown>
 type Listener = {
   server: http.Server
@@ -184,6 +201,17 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           return json(res, { at: Date.now(), checks: runDoctor(core) })
         case "/api/notifications":
           return json(res, core.alerts({ after: url.searchParams.has("after") ? num("after", 0) : undefined, limit: num("limit", 50) }))
+        case "/api/settings": {
+          if (req.method === "GET") return json(res, buildSettings(core))
+          if (!writeAllowed(req, true)) return json(res, { error: "Forbidden" }, 403)
+          const body = await readBody(req)
+          if (body === undefined) return json(res, { error: "Bad request" }, 400)
+          const r = applySetting(core, body.path, body.value)
+          if (!r.ok) return json(res, r, 400)
+          core.log.info("dashboard setting", { path: body.path, cleared: body.value === null })
+          core.notify("pools")
+          return json(res, { ok: true, settings: buildSettings(core) })
+        }
         case "/api/status":
           return json(res, buildStatus(core))
         case "/api/menubar":
@@ -251,10 +279,9 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           return
         }
         case "/api/action": {
-          if (req.method !== "POST" || req.headers["x-quota-router"] !== "1") return json(res, { error: "Forbidden" }, 403)
-          let body = ""
-          for await (const chunk of req) body += chunk
-          const a = JSON.parse(body || "{}")
+          if (!writeAllowed(req)) return json(res, { error: "Forbidden" }, 403)
+          const a = await readBody(req)
+          if (a === undefined) return json(res, { error: "Bad request" }, 400)
           if (a.action === "reset-pool" && typeof a.pool === "string") {
             core.pools.reset(a.pool, "dashboard")
             core.settle()

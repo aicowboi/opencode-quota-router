@@ -231,6 +231,8 @@ Sessions move at their next turn after a schedule starts or ends, never in the m
 - usage charts, breakdowns by model, project, agent and tool, and searchable sessions;
 - CSV export.
 
+**Settings page:** open the **⋯** menu and choose **Settings** (or go to `http://127.0.0.1:47321/#settings`) to change the common settings without editing files: routing, cut-over points, usage checks, spending caps, notifications, the status line, the telemetry export's identity fields, and how long detail is kept. A change applies at once and is checked first: a value out of range is refused with the reason next to the field. Changes are kept by the plugin on top of your `opencode.jsonc`, which is never written to; the page shows what the file says, and **Reset** goes back to it. Where the dashboard listens, where telemetry is sent and its headers, the local server addresses and `explicitProviders` can only be set in `opencode.jsonc`.
+
 **Menu bar** (OpenCode Desktop only): a ring showing Claude's 5-hour window, with short status text. Its menu shows allowances, the route, running sessions, today's totals and quick actions. Turn it off with `"dashboard": { "menubar": false }`.
 
 **Accessibility:** the dashboard works from the keyboard (a skip link, the menu with arrow keys and Escape, the usage chart with the left and right arrow keys) and with a screen reader (each chart has a summary and a data table, and actions say whether they worked). Text meets WCAG AA contrast in the dark and light schemes, motion stops when the system asks for less, and numbers, money and dates follow your browser's language.

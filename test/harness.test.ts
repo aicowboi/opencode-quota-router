@@ -1125,3 +1125,68 @@ test("dashboard page: accessibility basics stay in place", async () => {
   // Every icon-only button has a name.
   for (const b of html.matchAll(/<button[^>]*>\s*<svg/g)) assert.match(b[0], /aria-label="/)
 })
+
+test("settings page: changes are checked, stored over opencode.jsonc, and only accepted from the page itself", async () => {
+  core.config.dashboard.port = 47900 + Math.floor(Math.random() * 90)
+  const d = await startDashboard(core)
+  assert.ok(d)
+  try {
+    const html = await (await fetch(d.url)).text()
+    const token = html.match(/<meta name="qr-token" content="([^"]+)">/)?.[1]
+    assert.ok(token && token !== "__QR_TOKEN__" && token.length >= 32)
+    const base = { "content-type": "application/json", "x-quota-router": "1", "x-quota-router-token": token! }
+    const post = (body: unknown, headers: Record<string, string> = base) => fetch(`${d.url}/api/settings`, { method: "POST", headers, body: JSON.stringify(body) })
+    const field = (s: any, path: string) => s.groups.flatMap((g: any) => g.fields).find((f: any) => f.path === path)
+
+    const before: any = await (await fetch(`${d.url}/api/settings`)).json()
+    assert.ok(before.groups.length >= 5 && before.locked.includes("telemetry.endpoint"))
+    assert.equal(field(before, "claude.cutoverAtPct").value, core.config.claude.cutoverAtPct)
+    assert.equal(field(before, "claude.cutoverAtPct").changed, false)
+
+    // Refused: no token, a wrong one, another site's origin, a cross-site fetch, a form post.
+    const { "x-quota-router-token": _, ...noToken } = base
+    for (const headers of [noToken, { ...base, "x-quota-router-token": "x".repeat(token!.length) }, { ...base, origin: "http://evil.example" }, { ...base, "sec-fetch-site": "cross-site" }, { ...base, "content-type": "text/plain" }])
+      assert.equal((await post({ path: "claude.cutoverAtPct", value: 90 }, headers)).status, 403)
+    assert.equal((await fetch(`${d.url}/api/action`, { method: "POST", headers: { ...base, origin: "http://evil.example" }, body: '{"action":"pause"}' })).status, 403)
+    assert.equal(core.config.claude.cutoverAtPct, 98)
+
+    // Accepted from the page's own origin; minutes and percent are converted to what the option stores.
+    let r = await post({ path: "claude.cutoverAtPct", value: 90 }, { ...base, origin: d.url, "sec-fetch-site": "same-origin" })
+    assert.equal(r.status, 200)
+    const after: any = (await r.json()).settings
+    assert.equal(core.config.claude.cutoverAtPct, 90)
+    assert.deepEqual([field(after, "claude.cutoverAtPct").changed, field(after, "claude.cutoverAtPct").configured], [true, undefined])
+    assert.equal((await post({ path: "switching.minStayMs", value: 5 })).status, 200)
+    assert.equal(core.config.switching.minStayMs, 5 * 60_000)
+    assert.equal((await post({ path: "copilot.reserveFraction", value: 2.5 })).status, 200)
+    assert.equal(core.config.copilot.reserveFraction, 0.025)
+
+    // Out of range, the wrong type, a locked setting and one the page doesn't offer are refused with a reason.
+    for (const [body, msg] of [
+      [{ path: "claude.cutoverAtPct", value: 101 }, /between 0 and 100/],
+      [{ path: "claude.usageProbe", value: "yes" }, /on or off/],
+      [{ path: "telemetry.level", value: "everything" }, /choices/],
+      [{ path: "telemetry.identity.userId", value: "a\u0000b" }, /text/],
+      [{ path: "dashboard.port", value: 1 }, /can't be changed/],
+      [{ path: "telemetry.endpoint", value: "https://elsewhere.example" }, /can't be changed/],
+      [{ path: "__proto__.polluted", value: true }, /can't be changed/],
+    ] as const) {
+      r = await post(body)
+      assert.equal(r.status, 400, JSON.stringify(body))
+      assert.match((await r.json()).error, msg)
+    }
+    assert.equal(({} as any).polluted, undefined)
+
+    // Choosing the configured value again drops the override.
+    assert.equal((await post({ path: "dryRun", value: true })).status, 200)
+    assert.equal((await post({ path: "dryRun", value: false })).status, 200)
+    assert.equal(Object.hasOwn(core.storedSettings(), "dryRun"), false)
+    // Reset goes back to the configured value.
+    for (const path of ["claude.cutoverAtPct", "switching.minStayMs", "copilot.reserveFraction"]) assert.equal((await post({ path, value: null })).status, 200)
+    assert.equal(core.config.claude.cutoverAtPct, 98)
+    assert.equal(core.config.switching.minStayMs, 3 * 60_000)
+    assert.deepEqual(core.storedSettings(), {})
+  } finally {
+    await d.stop()
+  }
+})
