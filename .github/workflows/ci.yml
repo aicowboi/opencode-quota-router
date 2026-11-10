@@ -30,3 +30,5 @@ jobs:
       # Built first: a test runs the built command line (dist/ is not committed here; npm builds it when packing).
       - run: npm run build
       - run: npm test
+      # The LiteLLM callback: the same classifier cases, in Python.
+      - run: python3 -m unittest discover -s integrations/litellm

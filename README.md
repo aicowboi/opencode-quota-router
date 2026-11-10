@@ -35,6 +35,8 @@ quota-router uses it in this order:
 - [How routing works](#how-routing-works)
 - [Dashboard and menu bar](#dashboard-and-menu-bar)
 - [Commands](#commands)
+- [Command line](#command-line)
+- [LiteLLM](#litellm)
 - [Configuration reference](#configuration-reference)
 - [Errors it handles](#errors-it-handles)
 - [FAQ](#faq)
@@ -294,6 +296,10 @@ or as a [Starship](https://starship.rs) custom module:
 command = "quota-router prompt --no-color"
 when = true
 ```
+
+## LiteLLM
+
+The same limit handling is available for [LiteLLM](https://docs.litellm.ai) as one Python file: [`integrations/litellm`](integrations/litellm). Add it as a callback to a LiteLLM Router or Proxy. After a deployment hits a limit, it sets that deployment aside until the limit resets, so requests go to the model group's other deployments.
 
 ## Configuration reference
 

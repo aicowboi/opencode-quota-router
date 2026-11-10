@@ -29,3 +29,7 @@ coverage/
 .opencode/
 opencode.json
 opencode.jsonc
+
+# Python
+__pycache__/
+*.pyc
