@@ -1,7 +1,9 @@
 name: Publish to npm
 
-# Publishes the released commit, so npm only ever receives what is on GitHub. Provenance links each version to this
-# repository and workflow run.
+# Publishes the released commit, so npm only ever receives what is on GitHub. It uses npm trusted publishing: npm
+# accepts this workflow's short-lived OIDC identity instead of a stored token (set up once under the package's
+# Settings → Trusted publisher on npmjs.com: this repository, workflow publish.yml, environment npm). Provenance links
+# each version to this repository and workflow run.
 on:
   release:
     types: [published]
@@ -23,15 +25,16 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); if (a < 11 || (a === 11 && (b < 5 || (b === 5 && c < 1)))) { console.error("npm " + process.argv[1] + " is too old for trusted publishing"); process.exit(1) }' "$(npm --version)"
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
-      - run: npm test
       - run: npm run build
+      - run: npm test
+      - run: python3 -m unittest discover -s integrations/litellm
       - name: Check the version matches the release tag
         if: github.event_name == 'release'
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: test "v$(node -p 'require("./package.json").version')" = "$TAG"
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,6 +1,6 @@
 {
   "name": "opencode-quota-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenCode plugin: automatic model fallback when you hit Claude, ChatGPT, Copilot or Grok usage limits, recovery when they reset, and a local usage and cost dashboard",
   "type": "module",
   "exports": {
@@ -16,6 +16,8 @@
     "src",
     "gui",
     "dist",
+    "docs",
+    "integrations",
     "README.md",
     "LICENSE",
     "SECURITY.md",

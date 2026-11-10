@@ -47,17 +47,10 @@ quota-router uses it in this order:
 ## Requirements
 
 - **OpenCode V2**, 2.2 or later. The menu bar item needs OpenCode Desktop. See the [support matrix](docs/support.md).
-- **Node.js 24 or later and npm**, only to install and build.
+- **Node.js 24 or later**, only for the `quota-router` command line and to build from source. OpenCode runs the plugin itself.
 - **At least two OpenCode providers connected**, for example a Claude subscription and an API key.
 
 ## Quick start
-
-```bash
-git clone https://github.com/aicowboi/opencode-quota-router.git
-cd opencode-quota-router
-npm install --ignore-scripts
-npm run build          # builds the menu bar part (dist/gui-experimental.cjs)
-```
 
 Add the plugin to your global OpenCode config, `~/.config/opencode/opencode.jsonc`:
 
@@ -65,12 +58,25 @@ Add the plugin to your global OpenCode config, `~/.config/opencode/opencode.json
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
-    { "package": "/absolute/path/to/opencode-quota-router", "options": {} }
+    { "package": "opencode-quota-router", "options": {} }
   ]
 }
 ```
 
-OpenCode loads it straight away; there's nothing to restart. Run `/router` in any session to open the dashboard.
+OpenCode installs it from npm and loads it straight away; there's nothing to restart. Run `/router` in any session to open the dashboard. To stay on one version, write `opencode-quota-router@0.2.0`.
+
+For the command line as well (`quota-router usage`, `limits`, `prompt`), install it globally: `npm install -g opencode-quota-router`.
+
+**From source**, to follow the main branch or change the code:
+
+```bash
+git clone https://github.com/aicowboi/opencode-quota-router.git
+cd opencode-quota-router
+npm install --ignore-scripts
+npm run build          # the menu bar part and the command line, into dist/
+```
+
+then use the folder's absolute path as `"package"`.
 
 ## Onboarding guide
 
@@ -427,7 +433,8 @@ Start with `/router doctor`. It checks that routing is on, which providers are c
 npm install --ignore-scripts
 npm test           # unit, harness and storage tests (Node 24, built-in SQLite)
 npm run typecheck
-npm run build      # menu bar bundle
+npm run build      # menu bar bundle and command line (dist/)
+python3 -m unittest discover -s integrations/litellm
 ```
 
 - **Dashboard:** `src/dashboard/page.html`, read on every request.
