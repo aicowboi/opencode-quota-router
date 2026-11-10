@@ -1,0 +1,509 @@
+{
+  "comment": "Invented provider errors and the routing signal each should produce. Shared by the TypeScript tests and the Python port for LiteLLM.",
+  "now": "2026-11-09T19:00:00Z",
+  "cases": [
+    {
+      "name": "Gemini free tier daily quota resets at midnight Pacific",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "You exceeded your current quota, please check your plan and billing details.",
+        "status": 429,
+        "response": {
+          "body": "{\"error\": {\"code\": 429, \"message\": \"Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 50\", \"status\": \"RESOURCE_EXHAUSTED\", \"details\": [{\"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\", \"violations\": [{\"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"}]}, {\"@type\": \"type.googleapis.com/google.rpc.RetryInfo\", \"retryDelay\": \"34s\"}]}}"
+        }
+      },
+      "expect": {
+        "kind": "window",
+        "pools": [
+          "google:gemini-3-pro"
+        ],
+        "evidence": "Gemini daily limit (free tier)",
+        "resetAt": "2026-11-10T08:00:00Z"
+      }
+    },
+    {
+      "name": "Gemini per-minute limit is a throttle with the delay Google gives",
+      "provider": "google",
+      "model": "gemini-3-flash",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "Resource has been exhausted (e.g. check quota).",
+        "status": 429,
+        "response": {
+          "body": "{\"error\": {\"code\": 429, \"status\": \"RESOURCE_EXHAUSTED\", \"details\": [{\"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\", \"violations\": [{\"quotaId\": \"GenerateContentInputTokensPerModelPerMinute\"}]}, {\"@type\": \"type.googleapis.com/google.rpc.RetryInfo\", \"retryDelay\": \"34s\"}]}}"
+        }
+      },
+      "expect": {
+        "kind": "throttle",
+        "pools": [
+          "google:gemini-3-flash"
+        ],
+        "retryAfterMs": 34000
+      }
+    },
+    {
+      "name": "Gemini delay given only in words",
+      "provider": "google",
+      "model": "gemini-3-flash",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "Quota exceeded. Please retry in 12.5s.",
+        "status": 429
+      },
+      "expect": {
+        "kind": "throttle",
+        "pools": [
+          "google:gemini-3-flash"
+        ],
+        "retryAfterMs": 12500
+      }
+    },
+    {
+      "name": "Gemini overloaded",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "error": {
+        "type": "provider.internal",
+        "message": "The model is overloaded. Please try again later.",
+        "status": 503
+      },
+      "expect": {
+        "kind": "overload",
+        "pools": [
+          "google:gemini-3-pro"
+        ]
+      }
+    },
+    {
+      "name": "Gemini billing",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "error": {
+        "type": "provider.unknown",
+        "message": "payment_required",
+        "status": 402
+      },
+      "expect": {
+        "kind": "billing",
+        "pools": [
+          "google"
+        ]
+      }
+    },
+    {
+      "name": "Vertex resource exhausted",
+      "provider": "google-vertex",
+      "model": "gemini-3-pro",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "Resource exhausted, please try again later.",
+        "status": 429
+      },
+      "expect": {
+        "kind": "throttle",
+        "pools": [
+          "google-vertex:gemini-3-pro"
+        ],
+        "evidence": "Vertex AI resource exhausted"
+      }
+    },
+    {
+      "name": "Claude on Vertex overloaded",
+      "provider": "google-vertex-anthropic",
+      "model": "claude-opus-5-5",
+      "error": {
+        "type": "provider.internal",
+        "message": "Overloaded",
+        "status": 529
+      },
+      "expect": {
+        "kind": "overload",
+        "pools": [
+          "google-vertex-anthropic:claude-opus-5-5"
+        ]
+      }
+    },
+    {
+      "name": "OpenRouter out of credit",
+      "provider": "openrouter",
+      "model": "anthropic/claude-opus-5.5",
+      "error": {
+        "type": "provider.quota",
+        "message": "Insufficient credits. Add more using https://openrouter.ai/credits",
+        "status": 402,
+        "response": {
+          "body": "{\"error\": {\"code\": 402, \"message\": \"Insufficient credits.\"}}"
+        }
+      },
+      "expect": {
+        "kind": "billing",
+        "pools": [
+          "openrouter"
+        ],
+        "evidence": "OpenRouter credit used up"
+      }
+    },
+    {
+      "name": "OpenRouter key limit with its reset",
+      "provider": "openrouter",
+      "model": "anthropic/claude-opus-5.5",
+      "error": {
+        "type": "provider.auth",
+        "message": "Key limit exceeded",
+        "status": 403,
+        "response": {
+          "body": "{\"error\": {\"code\": 403, \"message\": \"Key limit exceeded\", \"metadata\": {\"limit_source\": \"key_monthly\", \"resets_at\": \"2026-12-01T00:00:00Z\"}}}"
+        }
+      },
+      "expect": {
+        "kind": "billing",
+        "pools": [
+          "openrouter"
+        ],
+        "evidence": "OpenRouter key monthly limit",
+        "resetAt": "2026-12-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "OpenRouter free models share a daily allowance",
+      "provider": "openrouter",
+      "model": "meta/llama-5:free",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day",
+        "status": 429,
+        "response": {
+          "body": "{\"error\": {\"code\": 429, \"metadata\": {\"headers\": {\"X-RateLimit-Limit\": \"50\", \"X-RateLimit-Remaining\": \"0\", \"X-RateLimit-Reset\": \"1794268800000\"}}}}"
+        }
+      },
+      "expect": {
+        "kind": "window",
+        "pools": [
+          "openrouter:free"
+        ],
+        "resetAt": "2026-11-10T00:00:00Z"
+      }
+    },
+    {
+      "name": "OpenRouter upstream rate limit only concerns that model",
+      "provider": "openrouter",
+      "model": "anthropic/claude-opus-5.5",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "Provider returned error",
+        "status": 429,
+        "response": {
+          "body": "{\"error\": {\"code\": 429, \"message\": \"Provider returned error\", \"metadata\": {\"provider_name\": \"Example\", \"raw\": \"rate limited upstream\"}}}"
+        }
+      },
+      "expect": {
+        "kind": "throttle",
+        "pools": [
+          "openrouter:anthropic/claude-opus-5.5"
+        ]
+      }
+    },
+    {
+      "name": "OpenRouter has no provider up",
+      "provider": "openrouter",
+      "model": "x/y",
+      "error": {
+        "type": "provider.internal",
+        "message": "No available providers",
+        "status": 503
+      },
+      "expect": {
+        "kind": "overload",
+        "pools": [
+          "openrouter:x/y"
+        ]
+      }
+    },
+    {
+      "name": "Azure token rate limit, wait in the message",
+      "provider": "azure",
+      "model": "gpt-6.1-sol",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "Requests to the ChatCompletions_Create Operation under Azure OpenAI API have exceeded token rate limit of your current OpenAI S0 pricing tier. Please retry after 26 seconds.",
+        "status": 429,
+        "response": {
+          "body": "{\"error\": {\"code\": \"429\", \"message\": \"exceeded token rate limit\"}}"
+        }
+      },
+      "expect": {
+        "kind": "throttle",
+        "pools": [
+          "azure:gpt-6.1-sol"
+        ],
+        "retryAfterMs": 26000
+      }
+    },
+    {
+      "name": "Azure retry-after-ms header wins",
+      "provider": "azure",
+      "model": "gpt-6.1-sol",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "Too many requests. Please retry after 26 seconds.",
+        "status": 429,
+        "retryAfterMs": 1500
+      },
+      "expect": {
+        "kind": "throttle",
+        "pools": [
+          "azure:gpt-6.1-sol"
+        ],
+        "retryAfterMs": 1500
+      }
+    },
+    {
+      "name": "Azure out of quota",
+      "provider": "azure-cognitive-services",
+      "model": "gpt-6.1-sol",
+      "error": {
+        "type": "provider.quota",
+        "message": "Out of call volume quota.",
+        "status": 403,
+        "response": {
+          "body": "{\"error\": {\"code\": \"insufficient_quota\"}}"
+        }
+      },
+      "expect": {
+        "kind": "billing",
+        "pools": [
+          "azure-cognitive-services"
+        ]
+      }
+    },
+    {
+      "name": "Bedrock throttled",
+      "provider": "amazon-bedrock",
+      "model": "anthropic.claude-opus-5-5-v1:0",
+      "error": {
+        "type": "provider.unknown",
+        "message": "ThrottlingException: Too many requests, please wait before trying again."
+      },
+      "expect": {
+        "kind": "throttle",
+        "pools": [
+          "amazon-bedrock:anthropic.claude-opus-5-5-v1:0"
+        ]
+      }
+    },
+    {
+      "name": "Bedrock daily tokens",
+      "provider": "amazon-bedrock",
+      "model": "anthropic.claude-opus-5-5-v1:0",
+      "error": {
+        "type": "provider.unknown",
+        "message": "ThrottlingException: Too many tokens per day, please wait before trying again.",
+        "status": 429
+      },
+      "expect": {
+        "kind": "window",
+        "pools": [
+          "amazon-bedrock:anthropic.claude-opus-5-5-v1:0"
+        ],
+        "evidence": "Bedrock daily token quota"
+      }
+    },
+    {
+      "name": "Bedrock model not ready",
+      "provider": "amazon-bedrock",
+      "model": "m",
+      "error": {
+        "type": "provider.unknown",
+        "message": "ModelNotReadyException: The model is not ready for inference."
+      },
+      "expect": {
+        "kind": "overload",
+        "pools": [
+          "amazon-bedrock:m"
+        ],
+        "evidence": "Bedrock model not ready"
+      }
+    },
+    {
+      "name": "Bedrock service unavailable",
+      "provider": "amazon-bedrock",
+      "model": "m",
+      "error": {
+        "type": "provider.internal",
+        "message": "ServiceUnavailableException",
+        "status": 503
+      },
+      "expect": {
+        "kind": "overload",
+        "pools": [
+          "amazon-bedrock:m"
+        ],
+        "evidence": "Bedrock unavailable"
+      }
+    },
+    {
+      "name": "AWS credentials expired",
+      "provider": "amazon-bedrock",
+      "model": "m",
+      "error": {
+        "type": "provider.auth",
+        "message": "ExpiredTokenException: The security token included in the request is expired",
+        "status": 403
+      },
+      "expect": {
+        "kind": "auth",
+        "pools": [
+          "amazon-bedrock"
+        ]
+      }
+    },
+    {
+      "name": "Ollama Cloud weekly limit",
+      "provider": "ollama-cloud",
+      "model": "qwen4-coder",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "you've reached your weekly usage limit, please upgrade to continue",
+        "status": 429
+      },
+      "expect": {
+        "kind": "window",
+        "pools": [
+          "ollama-cloud"
+        ],
+        "evidence": "Ollama Cloud weekly limit"
+      }
+    },
+    {
+      "name": "Ollama Cloud hourly limit comes back within the hour",
+      "provider": "ollama-cloud",
+      "model": "qwen4-coder",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "you've reached your hourly usage limit, please upgrade to continue",
+        "status": 429
+      },
+      "expect": {
+        "kind": "window",
+        "pools": [
+          "ollama-cloud"
+        ],
+        "resetAt": "2026-11-09T20:00:00Z"
+      }
+    },
+    {
+      "name": "OpenCode Go window with a reset time",
+      "provider": "opencode-go",
+      "model": "kimi-k3",
+      "error": {
+        "type": "provider.go-limit",
+        "message": "You have reached your 5-hour usage limit. Resets at 2026-11-09T22:00:00Z.",
+        "status": 429
+      },
+      "expect": {
+        "kind": "window",
+        "pools": [
+          "opencode-go"
+        ],
+        "evidence": "OpenCode Go 5-hour limit",
+        "resetAt": "2026-11-09T22:00:00Z"
+      }
+    },
+    {
+      "name": "OpenCode Go monthly limit",
+      "provider": "opencode-go",
+      "model": "kimi-k3",
+      "error": {
+        "type": "provider.go-limit",
+        "message": "Monthly usage limit reached.",
+        "status": 429
+      },
+      "expect": {
+        "kind": "window",
+        "pools": [
+          "opencode-go"
+        ],
+        "resetAt": "2026-12-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "OpenCode Zen free allowance",
+      "provider": "opencode",
+      "model": "some-free-model",
+      "error": {
+        "type": "provider.free-limit",
+        "message": "Free usage exceeded",
+        "status": 429
+      },
+      "expect": {
+        "kind": "window",
+        "pools": [
+          "opencode"
+        ],
+        "evidence": "OpenCode Zen free allowance"
+      }
+    },
+    {
+      "name": "OpenCode Zen balance",
+      "provider": "opencode",
+      "model": "claude-opus-5-5",
+      "error": {
+        "type": "provider.budget-limit",
+        "message": "Insufficient balance. Add credits to continue.",
+        "status": 402
+      },
+      "expect": {
+        "kind": "billing",
+        "pools": [
+          "opencode"
+        ]
+      }
+    },
+    {
+      "name": "A bad request on a per-model provider is left alone",
+      "provider": "azure",
+      "model": "gpt-6.1-sol",
+      "error": {
+        "type": "provider.invalid-request",
+        "message": "DeploymentNotFound",
+        "status": 400
+      },
+      "expect": null
+    },
+    {
+      "name": "An unknown provider's 429 still covers the provider",
+      "provider": "mock",
+      "model": "m",
+      "error": {
+        "type": "provider.rate-limit",
+        "message": "slow down, try again in 2m0s",
+        "status": 429
+      },
+      "expect": {
+        "kind": "throttle",
+        "pools": [
+          "mock"
+        ],
+        "retryAfterMs": 120000
+      }
+    },
+    {
+      "name": "A per-model provider's unrecognised 500 only concerns that model",
+      "provider": "amazon-bedrock",
+      "model": "m",
+      "error": {
+        "type": "provider.internal",
+        "message": "boom",
+        "status": 500
+      },
+      "expect": {
+        "kind": "overload",
+        "pools": [
+          "amazon-bedrock:m"
+        ]
+      }
+    }
+  ]
+}

@@ -1,11 +1,12 @@
 import { test } from "node:test"
+import fs from "node:fs"
 import assert from "node:assert/strict"
 import { classify, modelPools } from "../src/engine/classify.ts"
 import { checkSetting, loadConfig, overlay, parseRef, withSetting } from "../src/engine/config.ts"
 import { composeGates, economyGate, parseUntil, saveGate, spendBlocks, spendGate } from "../src/engine/policy.ts"
 import { forecast, paceGate, type WindowForecast } from "../src/engine/forecast.ts"
 import { advise, claudePlan, copilotPlan, PLANS } from "../src/engine/plans.ts"
-import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/engine/resets.ts"
+import { nextMidnightIn, parseDuration, parseResetText, parseRetryAfter, parseRetryText, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
 import { findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
 import { costOf, estimate } from "../src/engine/pricing.ts"
@@ -477,4 +478,44 @@ test("plan advice: a larger plan when limits cost more than the difference, a sm
   ;[a] = advise({ ...base, chatgpt: { hits: 6, limitedMs: 3_600_000 } })
   assert.equal(a.verdict, "watch")
   assert.match(a.detail, /ChatGPT Pro has a much larger allowance than Plus/)
+})
+
+test("classifier fixtures: Gemini, Vertex, OpenRouter, Azure, Bedrock, Ollama Cloud, OpenCode Go and Zen", () => {
+  const file = JSON.parse(fs.readFileSync(new URL("./fixtures/classify.json", import.meta.url), "utf8"))
+  const now = Date.parse(file.now)
+  assert.ok(file.cases.length >= 25)
+  for (const c of file.cases) {
+    const s = classify(c.provider, c.model, c.error, now)
+    if (c.expect === null) {
+      assert.equal(s, undefined, c.name)
+      continue
+    }
+    assert.ok(s, c.name)
+    assert.equal(s.kind, c.expect.kind, c.name)
+    assert.deepEqual(s.pools, c.expect.pools, c.name)
+    if (c.expect.evidence) assert.equal(s.evidence, c.expect.evidence, c.name)
+    if ("resetAt" in c.expect) assert.equal(s.resetAt && new Date(s.resetAt).toISOString(), new Date(c.expect.resetAt).toISOString(), c.name)
+    if ("retryAfterMs" in c.expect) assert.equal(s.retryAfterMs, c.expect.retryAfterMs, c.name)
+  }
+})
+
+test("resets: midnight in a provider's time zone, and waits given in words", () => {
+  const LA = "America/Los_Angeles"
+  const next = (iso: string) => new Date(nextMidnightIn(LA, Date.parse(iso))).toISOString()
+  assert.equal(next("2026-11-09T19:00:00Z"), "2026-11-10T08:00:00.000Z")
+  assert.equal(next("2026-07-01T06:59:59Z"), "2026-07-01T07:00:00.000Z")
+  assert.equal(next("2026-07-01T07:00:00Z"), "2026-07-02T07:00:00.000Z")
+  // Across the clock changes: 8 March 2026 is 23 hours long in Los Angeles, 1 November 25.
+  assert.equal(next("2026-03-08T08:30:00Z"), "2026-03-09T07:00:00.000Z")
+  assert.equal(next("2026-11-01T07:30:00Z"), "2026-11-02T08:00:00.000Z")
+  assert.equal(parseRetryText("Please retry after 26 seconds."), 26_000)
+  assert.equal(parseRetryText("Please retry in 34.07s"), 34_070)
+  assert.equal(parseRetryText("try again in 6m0s"), 360_000)
+  assert.equal(parseRetryText("Try again in 250ms"), 250)
+  assert.equal(parseRetryText("wait for 2 minutes"), 120_000)
+  assert.equal(parseRetryText("try again later"), undefined)
+  // Per-model providers keep a pool for each model; OpenRouter's free models share one more.
+  assert.deepEqual(modelPools("google", "gemini-3-pro"), ["google", "google:gemini-3-pro"])
+  assert.deepEqual(modelPools("openrouter", "meta/llama-5:free"), ["openrouter", "openrouter:meta/llama-5:free", "openrouter:free"])
+  assert.deepEqual(modelPools("ollama-cloud", "qwen4-coder"), ["ollama-cloud"])
 })

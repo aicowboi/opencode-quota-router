@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
+- Provider rules for Gemini, Vertex AI, OpenRouter, Azure OpenAI, Amazon Bedrock, Ollama Cloud, OpenCode Go and OpenCode Zen: their limit errors are recognised and given a reset time where there is one. Where a provider limits each model separately, a limit on one model no longer blocks the others.
+- A wait given in words in an error message ("retry after 26 seconds", "try again in 6m0s") is used when there is no `retry-after` header.
 - Forecasts: the dashboard and `/router doctor` say when a Claude, ChatGPT or Copilot window is on pace to run out before it resets.
 - Pace guard (`pace`): subagents, and agents you list, pass over a plan that is on pace to run out, keeping what is left for the main session. Off by default.
 - Plan advice (`/router advice` and a dashboard section): whether each subscription fits how it was used, from the local record of limits, usage checks and pay-per-use spend.

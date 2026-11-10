@@ -11,6 +11,32 @@ export function nextMonthUtc(now: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)
 }
 
+/**
+ * The next midnight in a time zone, for limits that reset on a provider's own calendar day (Gemini's daily quotas
+ * reset at midnight Pacific time).
+ */
+export function nextMidnightIn(timeZone: string, now: number): number {
+  const clock = (at: number) => {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", hour: "numeric", minute: "numeric", second: "numeric" }).formatToParts(at)
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0)
+    return (get("hour") * 3600 + get("minute") * 60 + get("second")) * 1000
+  }
+  let at = Math.floor(now / 1000) * 1000 + 86_400_000 - clock(now)
+  // A day with a clock change is 23 or 25 hours long: land on the midnight nearest to the estimate.
+  const off = clock(at)
+  if (off !== 0) at += off > 43_200_000 ? 86_400_000 - off : -off
+  return at
+}
+
+/** A wait given in words in an error message: `retry after 26 seconds`, `Please retry in 34.07s`, `try again in 6m0s`. */
+export function parseRetryText(text: string): number | undefined {
+  const m = /(?:retry|try again|wait)\s+(?:after|in|for)\s+(\d+(?:\.\d+)?)\s*(milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|h)(\d+(?:\.\d+)?(?:ms|s|m))?\b/i.exec(text)
+  if (!m) return undefined
+  const unit = m[2].toLowerCase()
+  const short = unit.startsWith("mil") || unit === "ms" ? "ms" : unit.startsWith("s") ? "s" : unit.startsWith("m") ? "m" : "h"
+  return parseDuration(`${m[1]}${short}${m[3] ?? ""}`)
+}
+
 /** `retry-after` style values: milliseconds header, seconds, or an HTTP date. */
 export function parseRetryAfter(value: string | undefined | null, now: number): number | undefined {
   if (!value) return undefined

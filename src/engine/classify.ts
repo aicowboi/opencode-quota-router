@@ -2,7 +2,7 @@
 // Evidence is checked from most to least specific: provider-specific codes and wording first,
 // then OpenCode's own error type, then status codes.
 import type { FailureKind, SessionError, Signal } from "./types.ts"
-import { nextMonthUtc, parseResetText, parseTimestamp } from "./resets.ts"
+import { nextMidnightIn, nextMonthUtc, parseDuration, parseResetText, parseRetryText, parseTimestamp } from "./resets.ts"
 
 /** Deterministic failures. A different model would only hide the real problem. */
 const NEVER_ROUTE = new Set([
@@ -23,11 +23,22 @@ const IGNORE = [/draw from your extra usage/i, /not your (?:plan|usage) limit/i]
 
 const CONTEXT_OVERFLOW = /prompt is too long|context(?: window|[_ ]length)[_ ]?(?:exceeded)?|maximum context length|too many tokens in request/i
 
-/** The pool(s) a model draws from. Claude subscription weekly limits can be per model family. */
+/** Providers whose rate limits and quotas are counted per model (or per deployment), not per account. */
+const PER_MODEL = new Set(["google", "google-vertex", "google-vertex-anthropic", "amazon-bedrock", "azure", "azure-cognitive-services", "openrouter"])
+
+/**
+ * The pool(s) a model draws from. Claude subscription weekly limits can be per model family; Gemini, Vertex, Bedrock,
+ * Azure and OpenRouter limit each model on its own, and OpenRouter's free models share one daily allowance.
+ */
 export function modelPools(providerID: string, modelID: string): string[] {
   if (providerID === "claude-agent") {
     const family = /opus|fable|sonnet|haiku/i.exec(modelID)?.[0]?.toLowerCase()
     return family ? [providerID, `${providerID}:${family}`] : [providerID]
+  }
+  if (PER_MODEL.has(providerID)) {
+    const pools = [providerID, `${providerID}:${modelID}`]
+    if (providerID === "openrouter" && modelID.endsWith(":free")) pools.push("openrouter:free")
+    return pools
   }
   return [providerID]
 }
@@ -134,13 +145,102 @@ function openai(error: SessionError, text: string, codes: string, pools: string[
   return undefined
 }
 
+/** A string field anywhere in the JSON error body, e.g. OpenRouter's `limit_source`. */
+const bodyString = (error: SessionError, key: string): string | undefined => {
+  let found: string | undefined
+  try {
+    const visit = (o: unknown) => {
+      if (!o || typeof o !== "object" || found !== undefined) return
+      for (const [k, v] of Object.entries(o)) {
+        if (k === key && typeof v === "string") found = v
+        else if (typeof v === "object") visit(v)
+      }
+    }
+    visit(JSON.parse(error.response?.body ?? ""))
+  } catch {}
+  return found
+}
+
+const wait = (error: SessionError, text: string) => error.retryAfterMs ?? parseRetryText(text)
+
+/** Gemini API (Google AI Studio keys): per-minute limits come with a retry delay, daily ones reset at midnight Pacific. */
+function gemini(error: SessionError, text: string, providerID: string, modelID: string, now: number): Signal | undefined {
+  const model = [`${providerID}:${modelID}`]
+  if (error.status === 402 || /payment_required|billing (?:account|is not enabled|has been disabled)|prepayment credits/i.test(text)) return signal("billing", [providerID], "Gemini billing or credit")
+  if (error.status === 429 || /resource_exhausted|quota_exceeded|rate_limit_exceeded|too_many_requests|quota exceeded/i.test(text)) {
+    const delay = parseDuration(bodyString(error, "retryDelay")) ?? wait(error, text)
+    if (/per_?day|daily|quota_exceeded/i.test(text)) {
+      const free = /free[_-]?tier/i.test(text)
+      return signal("window", model, `Gemini daily limit${free ? " (free tier)" : ""}`, { resetAt: nextMidnightIn("America/Los_Angeles", now) })
+    }
+    return signal("throttle", model, "Gemini rate limit", { retryAfterMs: delay })
+  }
+  if (error.status === 503 || /"UNAVAILABLE"|model is overloaded/i.test(text)) return signal("overload", model, "Gemini overloaded")
+  return undefined
+}
+
+/** Vertex AI: shared capacity, so "resource exhausted" is a short throttle unless a quota is named. */
+function vertex(error: SessionError, text: string, providerID: string, modelID: string): Signal | undefined {
+  const model = [`${providerID}:${modelID}`]
+  if (error.status === 429 || /resource[_ ]exhausted|quota exceeded/i.test(text)) return signal("throttle", model, "Vertex AI resource exhausted", { retryAfterMs: wait(error, text) })
+  if (error.status === 503 || /"UNAVAILABLE"|overloaded/i.test(text)) return signal("overload", model, "Vertex AI unavailable")
+  return undefined
+}
+
+/** OpenRouter: account credit, a key's own limit, the daily allowance for free models, and upstream rate limits. */
+function openrouter(error: SessionError, text: string, modelID: string, now: number): Signal | undefined {
+  const model = [`openrouter:${modelID}`]
+  const reset = () => parseTimestamp(bodyNumber(error, "resets_at") ?? bodyString(error, "resets_at") ?? bodyNumber(error, "X-RateLimit-Reset"), now)
+  const free = /free-models-per-(day|min)/i.exec(text)?.[1]?.toLowerCase()
+  if (free === "day") return signal("window", ["openrouter:free"], "OpenRouter daily allowance for free models", { resetAt: reset() })
+  if (free === "min") return signal("throttle", ["openrouter:free"], "OpenRouter rate limit for free models", { retryAfterMs: wait(error, text) })
+  const source = bodyString(error, "limit_source")
+  if (source || /key limit exceeded|limit exceeded for (?:this )?key/i.test(text)) return signal("billing", ["openrouter"], `OpenRouter ${source ? `${source.replaceAll("_", " ")} ` : "key "}limit`, { resetAt: reset() })
+  if (error.status === 402 || /insufficient credits|requires more credits|negative credit balance/i.test(text)) return signal("billing", ["openrouter"], "OpenRouter credit used up")
+  if (error.status === 429) return signal("throttle", model, "OpenRouter rate limit", { retryAfterMs: wait(error, text) })
+  if (error.status === 502 || error.status === 503 || /no (?:available|allowed) (?:model )?providers?/i.test(text)) return signal("overload", model, "OpenRouter has no provider available for this model")
+  return undefined
+}
+
+/** Azure OpenAI and Azure AI: limits are per deployment, and the wait is in `retry-after-ms` or the message. */
+function azure(error: SessionError, text: string, codes: string, providerID: string, modelID: string): Signal | undefined {
+  const model = [`${providerID}:${modelID}`]
+  if (/insufficient_quota|quota_exceeded|outofquota/.test(codes.replaceAll(" ", "")) || /out of (?:call volume )?quota|exceeded your current quota/i.test(text)) return signal("billing", [providerID], "Azure quota used up")
+  if (error.status === 429 || /exceeded (?:token|call|request) rate limit/i.test(text)) return signal("throttle", model, "Azure rate limit", { retryAfterMs: wait(error, text) })
+  if (error.status === 503 || /server_?busy|servicebusy|temporarily unable/i.test(text)) return signal("overload", model, "Azure deployment busy", { retryAfterMs: wait(error, text) })
+  return undefined
+}
+
+/** Amazon Bedrock: recognised by exception name, since the SDK does not always pass an HTTP status on. */
+function bedrock(error: SessionError, text: string, modelID: string): Signal | undefined {
+  const model = [`amazon-bedrock:${modelID}`]
+  if (/too many tokens per day|tokens per day/i.test(text)) return signal("window", model, "Bedrock daily token quota")
+  if (/ServiceQuotaExceededException/i.test(text)) return signal("window", model, "Bedrock service quota")
+  if (/ThrottlingException|TooManyRequestsException|too many requests/i.test(text) || error.status === 429) return signal("throttle", model, "Bedrock throttled", { retryAfterMs: wait(error, text) })
+  if (/ServiceUnavailableException|ModelNotReadyException|ModelTimeoutException|ModelStreamErrorException|InternalServerException/i.test(text)) return signal("overload", model, `Bedrock ${/ModelNotReady/i.test(text) ? "model not ready" : /ModelTimeout/i.test(text) ? "model timed out" : "unavailable"}`)
+  if (/ExpiredTokenException|UnrecognizedClientException|InvalidSignatureException|security token .* (?:expired|invalid)/i.test(text)) return signal("auth", ["amazon-bedrock"], "AWS credentials expired or invalid")
+  return undefined
+}
+
+/** Ollama Cloud, OpenCode Go and OpenCode Zen: plans with windows, where the message names the window that ran out. */
+function plan(error: SessionError, text: string, name: string, pools: string[], now: number): Signal | undefined {
+  const scope = /\b(hourly|5[- ]hour|five[- ]hour|session|daily|weekly|monthly)\b[^.\n]{0,24}\b(?:limit|usage|allowance|quota)/i.exec(text)?.[1]?.toLowerCase()
+  const limited = error.type === "provider.go-limit" || error.type === "provider.free-limit" || scope !== undefined
+  if (/insufficient (?:balance|credits?)|out of credits?|add (?:more )?credits?|payment required|billing/i.test(text) && !scope || error.type === "provider.budget-limit" || (error.status === 402 && !limited))
+    return signal("billing", pools, `${name} balance or spend limit`, { resetAt: parseResetText(text, now) })
+  if (!limited) return undefined
+  const resetAt = parseTimestamp(bodyNumber(error, "resets_at") ?? bodyString(error, "resets_at") ?? bodyNumber(error, "resetAt") ?? bodyString(error, "resetAt"), now) ?? parseResetText(text, now) ?? (scope === "monthly" ? nextMonthUtc(now) : scope === "hourly" ? now + 3_600_000 : undefined)
+  const what = error.type === "provider.free-limit" ? "free allowance" : `${scope ? `${scope.replace("five", "5")} ` : ""}limit`
+  return signal("window", pools, `${name} ${what}`, { resetAt, retryAfterMs: wait(error, text) })
+}
+
 export function classify(providerID: string, modelID: string, error: SessionError, now: number): Signal | undefined {
   if (NEVER_ROUTE.has(error.type) || error.type.startsWith("permission.") || error.type.startsWith("tool.")) return undefined
   const text = `${error.message}\n${error.response?.body ?? ""}`
   if (IGNORE.some((re) => re.test(text)) && error.status !== 429) return undefined
   if (error.type === "provider.invalid-request" && CONTEXT_OVERFLOW.test(text)) return undefined
   const codes = bodyCode(error)
-  const pools = modelPools(providerID, modelID)
+  let pools = modelPools(providerID, modelID)
 
   const specific =
     providerID === "claude-agent"
@@ -153,12 +253,31 @@ export function classify(providerID: string, modelID: string, error: SessionErro
             ? copilot(error, text, codes, pools, now)
             : providerID === "openai"
               ? openai(error, text, codes, pools, now)
-              : undefined
+              : providerID === "google"
+                ? gemini(error, text, providerID, modelID, now)
+                : providerID === "google-vertex" || providerID === "google-vertex-anthropic"
+                  ? vertex(error, text, providerID, modelID)
+                  : providerID === "openrouter"
+                    ? openrouter(error, text, modelID, now)
+                    : providerID === "azure" || providerID === "azure-cognitive-services"
+                      ? azure(error, text, codes, providerID, modelID)
+                      : providerID === "amazon-bedrock"
+                        ? bedrock(error, text, modelID)
+                        : providerID === "ollama-cloud"
+                          ? plan(error, text, "Ollama Cloud", pools, now)
+                          : providerID === "opencode-go"
+                            ? plan(error, text, "OpenCode Go", pools, now)
+                            : providerID === "opencode"
+                              ? plan(error, text, "OpenCode Zen", pools, now)
+                              : undefined
   if (specific) return specific
 
   // Invalid requests are deterministic unless a provider rule above recognised a spend limit.
   if (error.type === "provider.invalid-request") return undefined
   const resetAt = parseResetText(text, now)
+  // Where limits are counted per model, a rate limit or outage on one model says nothing about the others.
+  const account = pools
+  if (PER_MODEL.has(providerID)) pools = [`${providerID}:${modelID}`]
   switch (error.type) {
     case "provider.quota":
     case "provider.chatgpt-limit":
@@ -166,18 +285,18 @@ export function classify(providerID: string, modelID: string, error: SessionErro
     case "provider.model-budget-limit":
     case "provider.go-limit":
     case "provider.free-limit":
-      return signal("billing", pools, `Quota exhausted (${error.type})`, { resetAt })
+      return signal("billing", account, `Quota exhausted (${error.type})`, { resetAt })
     case "provider.rate-limit":
-      return signal(resetAt ? "window" : "throttle", pools, "Rate limited", { resetAt, retryAfterMs: error.retryAfterMs })
+      return signal(resetAt ? "window" : "throttle", pools, "Rate limited", { resetAt, retryAfterMs: wait(error, text) })
     case "provider.auth":
-      return signal("auth", pools, "Authentication failed")
+      return signal("auth", account, "Authentication failed")
     case "provider.internal":
     case "provider.transport":
     case "provider.timeout":
       return signal("overload", pools, `Provider unavailable (${error.type})`, { retryAfterMs: error.retryAfterMs })
   }
-  if (error.status === 429) return signal(resetAt ? "window" : "throttle", pools, "HTTP 429", { resetAt, retryAfterMs: error.retryAfterMs })
-  if (error.status === 402) return signal("billing", pools, "HTTP 402")
+  if (error.status === 429) return signal(resetAt ? "window" : "throttle", pools, "HTTP 429", { resetAt, retryAfterMs: wait(error, text) })
+  if (error.status === 402) return signal("billing", account, "HTTP 402")
   if (error.status !== undefined && error.status >= 500) return signal("overload", pools, `HTTP ${error.status}`)
   if (/usage limit|quota (?:exceeded|exhausted)|limit reached/i.test(text)) return signal("window", pools, "Usage limit", { resetAt })
   return undefined
