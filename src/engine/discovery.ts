@@ -75,6 +75,86 @@ export function withAdditions(config: Config, additions: Record<string, string[]
   return { ...config, chains }
 }
 
+/** Accepted chain updates: an entry swapped for a newer model, keeping its place. Keyed by chain, then by the entry replaced. */
+export function withReplacements(config: Config, replacements: Record<string, Record<string, string>>): Config {
+  const chains = { ...config.chains }
+  for (const [name, swaps] of Object.entries(replacements)) {
+    const chain = chains[name]
+    if (!chain) continue
+    chains[name] = chain.map((entry) => {
+      const to = Object.hasOwn(swaps, refKey(entry)) ? swaps[refKey(entry)] : undefined
+      if (!to) return entry
+      try {
+        const ref = parseRef(to)
+        // Two entries for one model would be the same entry twice.
+        return chain.some((r) => r.providerID === ref.providerID && r.id === ref.id) ? entry : ref
+      } catch {
+        return entry
+      }
+    })
+  }
+  return { ...config, chains }
+}
+
+export type ChainUpdate = {
+  chain: string
+  /** The entry as it stands, and the provider's name for the model. */
+  ref: string
+  name?: string
+  /** The entry to replace it with; absent when the model is retired and nothing newer of its kind is offered. */
+  to?: string
+  toName?: string
+  deprecated: boolean
+  reason: string
+}
+
+/** A model ID without its version, so `claude-opus-5-5` and `claude-opus-5-6` read as the same model line. */
+export function modelLine(id: string): string {
+  return id
+    .toLowerCase()
+    .replace(/[-@:]?(20\d{6}|20\d{2}-\d{2}-\d{2})/g, "")
+    .replace(/(^|[-_.:/ ])v?\d+([.\-_]\d+)*(?=$|[-_.:/ ])/g, "$1")
+    .replace(/[-_.: ]+/g, "-")
+    .replace(/^-|-$/g, "")
+}
+
+/**
+ * Chain entries with a newer model of the same line on the same provider (Opus 5.5 → 5.6), and entries whose model
+ * the provider has marked deprecated. A newer model only counts when both release dates are known, its ID differs
+ * in nothing but the version, and it is not of another family.
+ */
+export function chainUpdates(config: Config, models: Map<string, ModelInfo>, ignored: Set<string> = new Set()): ChainUpdate[] {
+  const out: ChainUpdate[] = []
+  for (const chain of Object.keys(config.chains)) {
+    for (const entry of config.chains[chain]) {
+      const current = models.get(refKey(entry))
+      if (!current) continue
+      const line = modelLine(current.id)
+      const newer = [...models.values()]
+        .filter((m) => m.providerID === current.providerID && m.id !== current.id && m.status !== "deprecated" && m.tools !== false)
+        .filter((m) => modelLine(m.id) === line && (!m.family || !current.family || m.family === current.family))
+        .filter((m) => m.released !== undefined && current.released !== undefined && m.released > current.released)
+        .filter((m) => !config.chains[chain].some((r) => r.providerID === m.providerID && r.id === m.id))
+        .sort((a, b) => (b.released ?? 0) - (a.released ?? 0))[0]
+      const deprecated = current.status === "deprecated"
+      if (!newer && !deprecated) continue
+      const variant = entry.variant && newer?.variants.includes(entry.variant) ? entry.variant : undefined
+      const to = newer ? refLabel({ providerID: newer.providerID, id: newer.id, ...(variant ? { variant } : {}) }) : undefined
+      if (ignored.has(`${chain} ${refKey(entry)}>${newer ? refKey(newer) : ""}`)) continue
+      out.push({
+        chain,
+        ref: refLabel(entry),
+        name: current.name,
+        to,
+        toName: newer?.name,
+        deprecated,
+        reason: deprecated ? (newer ? "The provider has marked this model deprecated; a newer one is offered" : "The provider has marked this model deprecated, and offers nothing newer of its kind") : "A newer model of the same line is offered",
+      })
+    }
+  }
+  return out
+}
+
 export type Suggestion = { chain: string; ref: string; providerID: string; kind: ProviderKind; name?: string; reason: string }
 
 /** List price per million output tokens, falling back to the API model a subscription model stands in for. */

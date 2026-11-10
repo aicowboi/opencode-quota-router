@@ -20,6 +20,9 @@ const PAGE_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "page.
 const page = () => fs.readFileSync(PAGE_FILE, "utf8")
 
 /** Compact status for the macOS menu bar. */
+/** A model reference as sent by the dashboard: provider/model, with an optional #effort. */
+const REF = /^[^/\s]+\/[^\s]+$/
+
 export function buildMenubar(core: Core) {
   const now = Date.now()
   const live = [...core.recorder.live.values()]
@@ -115,6 +118,8 @@ export function buildState(core: Core) {
     saved: core.saved(now),
     spend: { ...core.config.spend, ...core.spend(now), blocked: core.spendBlocks(now) },
     suggestions: core.suggestions(),
+    updates: core.updates(),
+    replaced: core.chainReplacements(),
     added: core.chainAdditions(),
     live,
     agents: core.config.agents,
@@ -259,6 +264,8 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           else if (a.action === "probe") await Promise.allSettled([core.probeClaude(true), core.probeCopilot(true)])
           else if (["chain-add", "chain-ignore", "chain-remove"].includes(a.action) && typeof a.chain === "string" && typeof a.ref === "string" && core.config.chains[a.chain] && /^[^/\s]+\/[^\s]+$/.test(a.ref))
             core.changeChain(a.action.slice(6) as "add" | "ignore" | "remove", a.chain, a.ref)
+          else if (["chain-replace", "chain-skip", "chain-restore"].includes(a.action) && typeof a.chain === "string" && typeof a.ref === "string" && Object.hasOwn(core.config.chains, a.chain) && REF.test(a.ref) && (a.action === "chain-replace" ? typeof a.to === "string" && REF.test(a.to) && core.updates().some((u) => u.chain === a.chain && u.ref === a.ref && u.to === a.to) : a.to === undefined || (typeof a.to === "string" && (a.to === "" || REF.test(a.to)))))
+            core.updateChain(a.action.slice(6) as "replace" | "skip" | "restore", a.chain, a.ref, a.to)
           else return json(res, { error: "Unknown action" }, 400)
           core.log.info("dashboard action", { action: a.action, pool: a.pool })
           core.notify("pools")

@@ -53,6 +53,8 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   const unused = connected.filter((id) => !inChains.has(id) && config.providers[id]?.allow !== "never")
   if (unused.length) add({ id: "unused", status: "warn", title: `Connected but in no chain: ${unused.join(", ")}`, detail: "A provider is only used when one of its models is in a chain.", fix: "Add a suggested entry under Route on the dashboard, or set it in chains." })
 
+  for (const u of core.updates())
+    add({ id: `update-${u.chain}-${u.ref}`, status: u.deprecated ? "warn" : "info", title: u.deprecated ? `Chain ${u.chain}: ${u.ref} is deprecated` : `Chain ${u.chain}: a newer model than ${u.ref} is offered`, detail: u.to ? `${u.reason}: ${u.to}.` : `${u.reason}.`, fix: u.to ? "Replace it under Route on the dashboard, or change the entry in chains." : "Choose another model for this entry in chains." })
   for (const name of Object.keys(config.chains)) {
     const chain = orderedChain(config, name)
     const usable = chain.filter((r) => core.models.has(refKey(r)) && config.providers[r.providerID]?.allow !== "never")

@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { classify } from "../src/engine/classify.ts"
 import { loadConfig } from "../src/engine/config.ts"
-import { applyDiscovery, kindOf, suggest, withAdditions, type ConnectionMethod } from "../src/engine/discovery.ts"
+import { applyDiscovery, chainUpdates, kindOf, modelLine, suggest, withAdditions, withReplacements, type ConnectionMethod } from "../src/engine/discovery.ts"
 import { codexWindows } from "../src/engine/headers.ts"
 import { estimate } from "../src/engine/pricing.ts"
 import { orderedChain } from "../src/engine/router.ts"
@@ -146,4 +146,46 @@ test("ChatGPT: x-codex headers give both windows", () => {
   assert.equal(w[0].resetAt, NOW + 1_200_000)
   assert.equal(w[1].resetAt, NOW + 86_400_000)
   assert.deepEqual(codexWindows(new Headers({ "x-ratelimit-remaining-requests": "5" }), NOW), [])
+})
+
+test("chain updates: a newer model of the same line, and deprecated entries", () => {
+  assert.equal(modelLine("claude-opus-5-5"), "claude-opus")
+  assert.equal(modelLine("claude-opus-5-6-20270115"), "claude-opus")
+  assert.equal(modelLine("gpt-6.1-sol"), "gpt-sol")
+  assert.equal(modelLine("gpt-6.2-mini"), "gpt-mini")
+  assert.equal(modelLine("grok-4.7"), "grok")
+  assert.equal(modelLine("anthropic.claude-opus-5-5-v1:0"), "anthropic-claude-opus")
+  assert.equal(modelLine("opus"), "opus")
+  assert.equal(modelLine("qwen4-coder:32b"), "qwen4-coder-32b", "a size is not a version")
+
+  const { config } = loadConfig({ chains: { opus: ["anthropic/claude-opus-5-5#medium", "openai/gpt-6.1-sol#high", "xai/grok-4.7#high", "claude-agent/opus#medium"], old: ["openai/gpt-5-retired"] } })
+  const models = new Map([
+    model("anthropic", "claude-opus-5-5", { family: "claude-opus", released: 10 }),
+    model("anthropic", "claude-opus-5-6", { family: "claude-opus", released: 20, variants: ["low", "medium", "high"] }),
+    model("anthropic", "claude-opus-5", { family: "claude-opus", released: 5 }),
+    model("anthropic", "claude-sonnet-5-6", { family: "claude-sonnet", released: 30 }),
+    // Same provider and newer, but another line of model: not an update.
+    model("openai", "gpt-6.1-sol", { family: "gpt", released: 10 }),
+    model("openai", "gpt-6.2-mini", { family: "gpt", released: 20 }),
+    // Newer by its name, but with no release date to go on.
+    model("xai", "grok-4.7", { released: 10 }),
+    model("xai", "grok-4.8"),
+    model("xai", "grok-5.0", { released: 20, tools: false }),
+    model("claude-agent", "opus"),
+    model("openai", "gpt-5-retired", { status: "deprecated", released: 1 }),
+  ])
+  const updates = chainUpdates(config, models)
+  assert.deepEqual(updates.map((u) => [u.chain, u.ref, u.to, u.deprecated]), [
+    ["opus", "anthropic/claude-opus-5-5#medium", "anthropic/claude-opus-5-6#medium", false],
+    ["old", "openai/gpt-5-retired", undefined, true],
+  ])
+  assert.equal(chainUpdates(config, models, new Set(["opus anthropic/claude-opus-5-5>anthropic/claude-opus-5-6"])).length, 1, "an ignored update is not offered again")
+
+  // Accepting swaps the entry in place; nothing else in the chain moves, and the update is no longer offered.
+  const swapped = withReplacements(config, { opus: { "anthropic/claude-opus-5-5": "anthropic/claude-opus-5-6#medium" }, gone: { x: "y/z" } })
+  assert.deepEqual(swapped.chains.opus.map((r) => r.id), ["claude-opus-5-6", "gpt-6.1-sol", "grok-4.7", "opus"])
+  assert.equal(swapped.chains.opus[0].variant, "medium")
+  assert.equal(chainUpdates(swapped, models).some((u) => u.chain === "opus"), false)
+  assert.deepEqual(withReplacements(config, { opus: { "anthropic/claude-opus-5-5": "not a ref" } }).chains.opus, config.chains.opus)
+  assert.deepEqual(withReplacements(config, { opus: { "anthropic/claude-opus-5-5": "openai/gpt-6.1-sol" } }).chains.opus, config.chains.opus, "never the same model twice")
 })

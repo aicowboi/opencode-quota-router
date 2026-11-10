@@ -19,7 +19,7 @@ import { combineRules, matchProject, parseRules, rulesGate, type Rules } from ".
 import { learnPool, type LearnedPool, type PoolSpend } from "./engine/learn.ts"
 import { fetchOpenRouterKey, findOpenRouterKey, interpretOpenRouter, type OpenRouterCredit } from "./probes/openrouter.ts"
 import { markDirty, optimize, prune, refreshSessions, rollupDirty } from "./maintenance.ts"
-import { applyDiscovery, suggest, withAdditions, type ConnectionMethod } from "./engine/discovery.ts"
+import { applyDiscovery, chainUpdates, suggest, withAdditions, withReplacements, type ConnectionMethod } from "./engine/discovery.ts"
 import type { CodexWindow } from "./engine/headers.ts"
 import { Recorder } from "./recorder.ts"
 import { Telemetry } from "./telemetry/exporter.ts"
@@ -154,7 +154,7 @@ export class Core {
     const { config, warnings } = loadConfig(overlay(this.options, this.storedSettings()))
     const connected = new Map<string, ConnectionMethod | undefined>()
     for (const m of this.models.values()) if (!connected.has(m.providerID)) connected.set(m.providerID, this.connections.get(m.providerID))
-    this.config = withAdditions(applyDiscovery(config, connected), this.chainAdditions())
+    this.config = withAdditions(withReplacements(applyDiscovery(config, connected), this.chainReplacements()), this.chainAdditions())
     this.warnings = warnings
     this.pools.setConfig(this.config)
     // Chains and ranks may have changed: re-resolve each session's preference.
@@ -525,6 +525,32 @@ export class Core {
 
   ignoredSuggestions(): string[] {
     return this.metaJSON<string[]>("chain_ignored", [])
+  }
+
+  /** Chain entries swapped for a newer model on the dashboard: chain, then the entry replaced, then its replacement. */
+  chainReplacements(): Record<string, Record<string, string>> {
+    return this.metaJSON<Record<string, Record<string, string>>>("chain_replaced", {})
+  }
+
+  /** Entries with a newer model of the same line on offer, or marked deprecated by their provider. */
+  updates() {
+    return chainUpdates(this.config, this.models, new Set(this.ignoredSuggestions()))
+  }
+
+  /** Swap a chain entry for a newer model, pass the suggestion over, or put the original entry back. */
+  updateChain(action: "replace" | "skip" | "restore", chain: string, ref: string, to?: string) {
+    const key = ref.replace(/#.*$/, "")
+    const replaced = this.chainReplacements()
+    if (action === "replace" && to) {
+      // An entry that is itself a replacement is updated at its origin, so one swap is stored per original entry.
+      const origin = Object.entries(replaced[chain] ?? {}).find(([, r]) => r.replace(/#.*$/, "") === key)?.[0] ?? key
+      replaced[chain] = { ...(replaced[chain] ?? {}), [origin]: to }
+    } else if (action === "restore") {
+      if (replaced[chain]) delete replaced[chain][key]
+    } else this.store.setMeta("chain_ignored", JSON.stringify([...new Set([...this.ignoredSuggestions(), `${chain} ${key}>${(to ?? "").replace(/#.*$/, "")}`])]))
+    if (action !== "skip") this.store.setMeta("chain_replaced", JSON.stringify(replaced))
+    this.log.info("chain", { action, chain, ref, to })
+    this.rebuildConfig()
   }
 
   suggestions() {

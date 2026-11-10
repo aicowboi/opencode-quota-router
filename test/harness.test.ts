@@ -829,6 +829,30 @@ test("schedules: a schedule puts a provider first or shuts one out while it appl
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
 })
 
+test("chain updates: replacing an entry with a newer model keeps its place, and can be undone", () => {
+  const key = "anthropic/claude-opus-5-5"
+  const info = core.models.get(key)
+  core.models.set(key, { ...info, family: "claude-opus", released: 10 })
+  core.models.set("anthropic/claude-opus-5-6", { ...info, id: "claude-opus-5-6", family: "claude-opus", released: 20 })
+  const at = core.config.chains.opus.findIndex((r: any) => r.providerID === "anthropic")
+  const variant = core.config.chains.opus[at].variant
+  const u = core.updates().find((x: any) => x.chain === "opus" && x.ref.startsWith(key))
+  assert.equal(u.to, `anthropic/claude-opus-5-6#${variant}`)
+  core.updateChain("replace", "opus", u.ref, u.to)
+  assert.equal(core.config.chains.opus[at].id, "claude-opus-5-6")
+  assert.equal(core.updates().some((x: any) => x.chain === "opus" && x.ref.startsWith("anthropic/")), false)
+  core.updateChain("restore", "opus", key)
+  assert.equal(core.config.chains.opus[at].id, "claude-opus-5-5")
+  // Passed over: not offered again, and nothing changes.
+  core.updateChain("skip", "opus", u.ref, u.to)
+  assert.equal(core.updates().some((x: any) => x.chain === "opus" && x.ref.startsWith(key)), false)
+  assert.equal(core.config.chains.opus[at].id, "claude-opus-5-5")
+  core.store.setMeta("chain_ignored", JSON.stringify(core.ignoredSuggestions().filter((x: string) => !x.includes(">"))))
+  core.models.delete("anthropic/claude-opus-5-6")
+  core.models.set(key, info)
+  core.rebuildConfig()
+})
+
 test("pace guard: a subagent leaves a plan that is on pace to run out, and the main session stays", async () => {
   const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
   const now = Date.now()

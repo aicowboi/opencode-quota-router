@@ -121,6 +121,7 @@ A **chain** lists the equivalent models across providers. Selecting any model in
 - **New sessions:** to route these by default, set your default model to a chain member, for example `"model": "claude-agent/opus"`.
 - **Models outside every chain** are never touched.
 - **Other providers:** the dashboard's Route section lists suggested entries for every connected provider that's in no chain yet: the same model family where there is one, otherwise the model nearest the chain's price level. **Add** puts it in the chain; **Ignore** hides it. Your choices are stored by the plugin, not in your config.
+- **Newer models:** when a provider you already use starts offering a newer model of the same line as a chain entry (Opus 5.5 → 5.6), the same section suggests replacing the entry. **Replace** swaps it in place, keeping its position and effort level, and **Undo** puts the original back. Only a model whose ID differs in nothing but its version, and that the provider lists as released later, is suggested, so a smaller or different model is never offered as an update. An entry whose model the provider has marked deprecated is flagged there and in `/router doctor`.
 
 **Choosing your own models.** Change one provider's entry and keep the rest of the chain:
 
