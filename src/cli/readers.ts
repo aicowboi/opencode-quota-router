@@ -23,6 +23,10 @@ export type Usage = {
   cacheWrite: number
   /** What the tool itself says the request cost, when it says. */
   cost?: number
+  /** Claude Code only: what started the session (`claude-desktop`, `cli`, or `sdk-ts` for the Agent SDK). */
+  via?: string
+  /** Claude Code only: the session the request belongs to. */
+  session?: string
 }
 
 /** A plan window as Codex last reported it. */
@@ -40,7 +44,7 @@ const str = (v: unknown) => (typeof v === "string" && v ? v : undefined)
  * larger output count, so each field keeps its largest value.
  */
 export const claudeParser: Parser<Usage, Record<string, never>> = {
-  version: 1,
+  version: 2,
   initial: () => ({}),
   line(text) {
     if (!text.includes('"usage"') || !text.includes('"assistant"')) return
@@ -67,6 +71,8 @@ export const claudeParser: Parser<Usage, Record<string, never>> = {
       reasoning: 0,
       cacheRead: num(u.cache_read_input_tokens),
       cacheWrite: num(u.cache_creation_input_tokens),
+      ...(str(o.entrypoint) ? { via: str(o.entrypoint) } : {}),
+      ...(str(o.sessionId) ? { session: str(o.sessionId) } : {}),
     }
   },
   key: (r) => r.id,
@@ -194,6 +200,37 @@ export async function readOpenCode(file: string): Promise<Usage[]> {
   }
 }
 
+// ---------- counted once ----------
+
+/**
+ * OpenCode's Claude subscription provider (`claude-agent`) runs Claude Code through the Agent SDK, which also writes
+ * each request to Claude Code's logs, marked `sdk-ts`. Those are counted once, as OpenCode's. A Claude Code SDK session
+ * is OpenCode's when at least half its requests have an OpenCode `claude-agent` request in the same folder within two
+ * minutes; then the whole session is left out. Matching whole sessions rather than single requests copes with the two
+ * logs splitting a request's tokens slightly differently. Claude Code sessions you start yourself are never touched,
+ * and nor is an SDK session of another program.
+ */
+export function withoutSdkCopies(usage: Usage[]): Usage[] {
+  const agent = usage.filter((u) => u.source === "opencode" && u.providerID === "claude-agent").sort((a, b) => a.at - b.at)
+  const sessions = new Map<string, Usage[]>()
+  for (const u of usage) if (u.source === "claude-code" && u.via === "sdk-ts" && u.session) sessions.set(u.session, [...(sessions.get(u.session) ?? []), u])
+  if (!agent.length || !sessions.size) return usage
+  // The OpenCode requests within two minutes of `at`, found by binary search.
+  const nearby = (u: Usage) => {
+    let lo = 0, hi = agent.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (agent[mid].at < u.at - 120_000) lo = mid + 1
+      else hi = mid
+    }
+    for (let i = lo; i < agent.length && agent[i].at <= u.at + 120_000; i++) if (agent[i].project === u.project) return true
+    return false
+  }
+  const copies = new Set<string>()
+  for (const [id, reqs] of sessions) if (reqs.filter(nearby).length * 2 >= reqs.length) copies.add(id)
+  return copies.size ? usage.filter((u) => !(u.source === "claude-code" && u.via === "sdk-ts" && u.session && copies.has(u.session))) : usage
+}
+
 // ---------- all of them ----------
 
 export type Paths = { claude: string; codex: string; opencode: string; cache?: string }
@@ -225,5 +262,5 @@ export async function readUsage(sources: Source[], paths: Paths, opts: { cache?:
     }
   }
   if (sources.includes("opencode")) usage.push(...(await readOpenCode(paths.opencode)))
-  return { usage, codexLimits }
+  return { usage: sources.includes("claude-code") && sources.includes("opencode") ? withoutSdkCopies(usage) : usage, codexLimits }
 }

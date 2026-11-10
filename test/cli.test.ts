@@ -5,7 +5,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { execFileSync } from "node:child_process"
-import { claudeParser, codexParser, readOpenCode, readUsage, type Usage } from "../src/cli/readers.ts"
+import { claudeParser, codexParser, readOpenCode, readUsage, withoutSdkCopies, type Usage } from "../src/cli/readers.ts"
 import { scan, jsonlFiles } from "../src/cli/scan.ts"
 import { loadPrices, rangeStart, summarise, valueOf } from "../src/cli/report.ts"
 import { main, parseArgs, table } from "../src/cli/index.ts"
@@ -212,4 +212,21 @@ test("the dashboard's address: noted by the plugin, read first by the terminal p
   asked.length = 0
   assert.equal(await reader(47321, get, () => 47999)("/api/status", () => true), undefined)
   assert.deepEqual(asked, [47999, 47321, 47322, 47323, 47324, 47325])
+})
+
+test("OpenCode's Claude subscription requests, which Claude Code also logs through the Agent SDK, are counted once", () => {
+  const MIN = 60_000
+  const u = (over: Partial<Usage>): Usage => ({ source: "claude-code", id: Math.random().toString(36), at: T0, providerID: "anthropic", model: "claude-fable-5-2", project: "/work/storefront", input: 2, output: 300, reasoning: 0, cacheRead: 100_000, cacheWrite: 1_000, ...over })
+  const opencode = [0, 2, 5].map((m) => u({ source: "opencode", providerID: "claude-agent", at: T0 + m * MIN, output: 150 }))
+  // The SDK's copies: a few seconds later, tokens split a little differently.
+  const copies = [0, 2, 5].map((m) => u({ via: "sdk-ts", session: "sdk-opencode", at: T0 + m * MIN + 3_000, cacheRead: 101_200, cacheWrite: 600 }))
+  const mine = [0, 2].map((m) => u({ via: "claude-desktop", session: "mine", at: T0 + m * MIN + 3_000 })) // started by you: kept
+  const otherApp = [u({ via: "sdk-ts", session: "other-app", at: T0 + MIN, project: "/work/elsewhere" }), u({ via: "sdk-ts", session: "other-app", at: T0 + 90 * MIN, project: "/work/elsewhere" })]
+  const all = [...opencode, ...copies, ...mine, ...otherApp]
+  const once = withoutSdkCopies(all)
+  assert.equal(once.length, all.length - copies.length)
+  assert.ok(copies.every((c) => !once.includes(c)))
+  assert.ok([...opencode, ...mine, ...otherApp].every((x) => once.includes(x)))
+  // Without OpenCode's records nothing is dropped.
+  assert.equal(withoutSdkCopies([...copies, ...mine]).length, 5)
 })
