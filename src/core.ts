@@ -10,6 +10,7 @@ import { PoolStore } from "./engine/pools.ts"
 import { estimate } from "./engine/pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
 import { fetchCopilotUser, findGithubToken, interpretCopilot, type CopilotQuota } from "./probes/copilot.ts"
+import { learnPool, type LearnedPool, type PoolSpend } from "./engine/learn.ts"
 import { fetchOpenRouterKey, findOpenRouterKey, interpretOpenRouter, type OpenRouterCredit } from "./probes/openrouter.ts"
 import { markDirty, optimize, prune, refreshSessions, rollupDirty } from "./maintenance.ts"
 import { applyDiscovery, suggest, withAdditions, type ConnectionMethod } from "./engine/discovery.ts"
@@ -231,6 +232,31 @@ export class Core {
   }
 
   private forecastCache?: { at: number; list: WindowForecast[] }
+  private learnedCache?: { at: number; spend: PoolSpend[]; pool?: LearnedPool }
+
+  /**
+   * xAI publishes no usage figures, so the size of its weekly pool is learned: each time it has run out, the usage
+   * in the week before, at list prices, is a reading of what it holds. An estimate, and shown as one.
+   */
+  learned(now = Date.now()): { xai?: LearnedPool } {
+    if (!this.hasProvider("xai") || this.config.providers.xai?.kind !== "subscription") return {}
+    const WEEK = 7 * 86_400_000
+    const c = this.learnedCache
+    if (c && now - c.at < 5 * 60_000 && now >= c.at) return c.pool ? { xai: c.pool } : {}
+    const exhausted = this.store
+      .all<{ at: number; until: number | null }>("SELECT at, until FROM pool_log WHERE pool = 'xai' AND status IN ('cooling', 'blocked') AND kind IN ('window', 'billing') AND at >= ? ORDER BY at", now - 26 * WEEK)
+      .map((r) => ({ at: r.at, until: r.until ?? undefined }))
+    const first = exhausted[0]
+    const spend = first
+      ? this.store.all<PoolSpend>(
+          "SELECT (COALESCE(ended_at, started_at) / 3600000) * 3600000 AS at, SUM(cost_equiv) AS usd FROM steps WHERE provider_id = 'xai' AND COALESCE(ended_at, started_at) >= ? GROUP BY 1 ORDER BY 1",
+          first.at - WEEK,
+        )
+      : []
+    const pool = learnPool({ exhausted, spend, windowMs: WEEK, now })
+    this.learnedCache = { at: now, spend, pool }
+    return pool ? { xai: pool } : {}
+  }
 
   /** Where each plan window is heading at its recent pace, from the usage figures the checks have recorded. */
   forecasts(now = Date.now()): WindowForecast[] {
@@ -281,6 +307,21 @@ export class Core {
       })
       const f = forecast(samples, { resetAt: w.resetAt, windowMs: w.windowMs, limitPct: w.limitPct, now })
       if (f) list.push({ ...f, providerID: w.providerID, pool: w.pool, label: w.label, pct: w.pct, limitPct: w.limitPct, resetAt: w.resetAt })
+    }
+    const xai = this.learned(now).xai
+    if (xai && !xai.exhausted && xai.resetAt) {
+      // No readings over time for a learned pool, so they are rebuilt from the usage on record.
+      const spend = (this.learnedCache?.spend ?? []).filter((s) => s.at >= xai.windowStart && s.at <= now)
+      const samples: Array<{ at: number; pct: number }> = []
+      let sum = 0
+      let i = 0
+      for (let at = xai.windowStart; ; at = Math.min(now, at + 3_600_000)) {
+        while (i < spend.length && spend[i].at < at) sum += spend[i++].usd
+        samples.push({ at, pct: (sum / xai.capacityUsd) * 100 })
+        if (at >= now) break
+      }
+      const f = forecast(samples, { resetAt: xai.resetAt, windowMs: 7 * DAY, limitPct: 100, now })
+      if (f) list.push({ ...f, providerID: "xai", pool: "xai", label: "xAI weekly pool (estimated)", pct: xai.pct, limitPct: 100, resetAt: xai.resetAt })
     }
     this.forecastCache = { at: now, list }
     return list

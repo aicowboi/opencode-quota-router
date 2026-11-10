@@ -402,7 +402,7 @@ function gauge(label, pct, value, col, cut) {
 // Where a plan window is heading at its recent pace. Only said when it would run out before it resets.
 function paceNotes(provider) {
   return (state.forecasts || []).filter((f) => f.providerID === provider && f.beforeReset).map((f) =>
-    '<div class="note"><span class="st-warn">' + esc(f.label.replace(/^(Claude|ChatGPT|Copilot) /, "")) + " on pace to run out " + esc(f.runsOutAt - Date.now() < 864e5 ? "at " + fmtTime(f.runsOutAt) : fmtWhen(f.runsOutAt)) + "</span> · resets " + esc(f.resetAt - Date.now() < 864e5 ? fmtTime(f.resetAt) : fmtWhen(f.resetAt)) + (state.pace && state.pace.enabled ? " · subagents are routed elsewhere" : "") + "</div>").join("")
+    '<div class="note"><span class="st-warn">' + esc(f.label.replace(/^(Claude|ChatGPT|Copilot|xAI) /, "")) + " on pace to run out " + esc(f.runsOutAt - Date.now() < 864e5 ? "at " + fmtTime(f.runsOutAt) : fmtWhen(f.runsOutAt)) + "</span> · resets " + esc(f.resetAt - Date.now() < 864e5 ? fmtTime(f.resetAt) : fmtWhen(f.resetAt)) + (state.pace && state.pace.enabled ? " · subagents are routed elsewhere" : "") + "</div>").join("")
 }
 
 function renderLadder() {
@@ -435,7 +435,11 @@ function renderLadder() {
         if (cp.economyAtPct && avail && used / avail * 100 >= cp.economyAtPct) cap += '<div class="note"><span class="st-info">Economy</span> · past ' + esc(cp.economyAtPct) + "%, the most expensive models are routed elsewhere when another provider can run them</div>"
       } else cap = '<div class="note">' + esc(cp.message || (cp.enabled ? "Waiting for the first usage check" : "Usage checks are off")) + "</div>"
     } else if (p.id === "xai") {
-      cap = '<div class="gauge"><span class="lab">Week</span><span class="track unknown"></span><span class="val muted">not reported</span></div><div class="note">xAI publishes no usage figures; limits are learned from errors.</div>'
+      const lx = (s.learned || {}).xai
+      if (lx) {
+        cap = gauge("Week", lx.pct, "about " + Math.round(lx.pct) + "%", col) + paceNotes("xai")
+        cap += '<div class="note">Estimated: xAI publishes no usage figures. From the ' + (lx.samples === 1 ? "one time" : fmtInt(lx.samples) + " times") + " it ran out, the weekly pool holds about " + fmtUSD(lx.capacityUsd) + " of usage at list prices; " + fmtUSD(lx.usedUsd) + " used " + (lx.exhausted ? "before it ran out" : "since " + esc(fmtWhen(lx.windowStart))) + ".</div>"
+      } else cap = '<div class="gauge"><span class="lab">Week</span><span class="track unknown"></span><span class="val muted">not reported</span></div><div class="note">xAI publishes no usage figures. Once the weekly pool has run out once, its size is estimated from your usage.</div>'
     } else if (p.id === "openai" && chatgpt()) {
       const w = s.chatgpt.data ? s.chatgpt.data.windows : []
       for (const x of w) cap += gauge(x.label === "weekly" ? "Week" : x.label, x.usedPct, Math.round(x.usedPct) + "%" + (x.resetAt ? " · " + esc(x.resetAt - Date.now() < 864e5 ? fmtTime(x.resetAt) : fmtWhen(x.resetAt)) : ""), col, s.chatgpt.cutoverAtPct)

@@ -152,6 +152,8 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 - **Copilot:** uses OpenCode's stored GitHub login to read your monthly allowance, and stops routing to Copilot before paid credits beyond it are used. Business and Enterprise seats share credits across the organisation, so your seat's share is used (1,900 or 3,900 a month); set `copilot.monthlyCredits` if yours differs.
 - **OpenRouter:** asks OpenRouter's documented `GET /api/v1/key` endpoint, with the key OpenCode already holds (or `OPENROUTER_API_KEY`), how much of the key's spending limit is left. The dashboard shows "$4.50 left on the key limit" and when it resets, and routing leaves OpenRouter once the limit, or a workspace or guardrail budget above it, is spent. It also reads how many free-model requests are left today, so `:free` models are passed over when those run out while paid models stay usable. OpenRouter does not report the account's credit balance to an ordinary key, so a key with no limit shows what it has spent and nothing more; running out of account credit is still caught from the error.
 
+**xAI needs no setting.** xAI publishes no usage figures, so quota-router learns the size of the SuperGrok weekly pool instead: each time it runs out, the usage in the week before, valued at list prices, is a reading of what it holds. From the first time on, the dashboard shows an estimated gauge ("about 60%"), and the forecast can say when it is on pace to run out. It is an estimate and is labelled as one: routing never leaves xAI because of it, and only the pace guard, if you turn it on, takes it into account.
+
 ### 5. Check it's working
 
 1. Run `/router`. The dashboard opens at `http://127.0.0.1:47321`.

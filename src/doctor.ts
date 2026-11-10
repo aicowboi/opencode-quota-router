@@ -84,6 +84,8 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   probe("probe-claude", "Claude", config.claude.usageProbe, core.hasProvider("claude-agent"), core.claude, "claude.usageProbe")
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
   probe("probe-openrouter", "OpenRouter", config.openrouter.usageProbe, core.hasProvider("openrouter"), core.openrouter, "openrouter.usageProbe")
+  const xai = core.learned(now).xai
+  if (xai) add({ id: "learned-xai", status: "info", title: `xAI weekly pool: about ${Math.round(xai.pct)}% used (estimated)`, detail: `xAI publishes no usage figures. From the ${xai.samples === 1 ? "one time" : `${xai.samples} times`} it ran out, the pool holds about $${xai.capacityUsd.toFixed(2)} of usage at list prices a week. Routing does not act on this estimate, except through the pace guard.` })
   if (core.chatgptActive()) add(core.chatgpt.at ? { id: "probe-chatgpt", status: "ok", title: "ChatGPT plan windows are being read", detail: `Last seen ${minutes(now - core.chatgpt.at)} ago` } : { id: "probe-chatgpt", status: "info", title: "ChatGPT plan windows appear after the first request" })
 
   // Plans

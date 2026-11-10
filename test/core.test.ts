@@ -10,6 +10,7 @@ import { nextMidnightIn, parseDuration, parseResetText, parseRetryAfter, parseRe
 import { PoolStore } from "../src/engine/pools.ts"
 import { findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
 import { costOf, estimate } from "../src/engine/pricing.ts"
+import { learnPool } from "../src/engine/learn.ts"
 import type { ModelInfo } from "../src/engine/types.ts"
 
 // Monday 2026-11-09 11:00 local
@@ -518,4 +519,44 @@ test("resets: midnight in a provider's time zone, and waits given in words", () 
   assert.deepEqual(modelPools("google", "gemini-3-pro"), ["google", "google:gemini-3-pro"])
   assert.deepEqual(modelPools("openrouter", "meta/llama-5:free"), ["openrouter", "openrouter:meta/llama-5:free", "openrouter:free"])
   assert.deepEqual(modelPools("ollama-cloud", "qwen4-coder"), ["ollama-cloud"])
+})
+
+test("learned pool: the size of a pool from the times it ran out", () => {
+  const DAY = 86_400_000
+  const HOUR = 3_600_000
+  const now = Date.parse("2026-11-09T19:00:00Z")
+  const WEEK = 7 * DAY
+  // $2 of usage every day for five weeks.
+  const spend = Array.from({ length: 35 }, (_, i) => ({ at: now - (35 - i) * DAY, usd: 2 }))
+  assert.equal(learnPool({ exhausted: [], spend, windowMs: WEEK, now }), undefined, "nothing to learn from until it has run out")
+  assert.equal(learnPool({ exhausted: [{ at: now - 3 * DAY }], spend: [], windowMs: WEEK, now }), undefined, "no usage on record")
+
+  // Ran out 20 days ago after a full week of use: the week before holds $14.
+  const once = learnPool({ exhausted: [{ at: now - 20 * DAY + HOUR, until: now - 19 * DAY }], spend, windowMs: WEEK, now })
+  assert.ok(once)
+  assert.equal(once.capacityUsd, 14)
+  assert.equal(once.samples, 1)
+  assert.equal(once.usedUsd, 14, "a rolling week when it last came back longer ago than that")
+  assert.equal(once.pct, 100)
+  assert.equal(once.resetAt, undefined)
+
+  // Repeated errors in one outage are one episode; a second outage starts its window where the first ended.
+  const twice = learnPool({
+    exhausted: [{ at: now - 20 * DAY + HOUR, until: now - 19 * DAY }, { at: now - 20 * DAY + 2 * HOUR, until: now - 19 * DAY }, { at: now - 3 * DAY + HOUR, until: now - 2 * DAY }],
+    spend, windowMs: WEEK, now,
+  })
+  assert.ok(twice)
+  assert.equal(twice.samples, 2)
+  assert.equal(twice.capacityUsd, 14)
+  assert.equal(twice.windowStart, now - 2 * DAY, "the window is anchored on when it came back")
+  assert.equal(twice.usedUsd, 4)
+  assert.ok(Math.abs(twice.pct - (4 / 14) * 100) < 1e-9)
+  assert.equal(twice.resetAt, now + 5 * DAY)
+  assert.equal(twice.exhausted, false)
+
+  // Out right now: full, and back when the limit says.
+  const out = learnPool({ exhausted: [{ at: now - HOUR, until: now + 6 * HOUR }], spend, windowMs: WEEK, now })
+  assert.equal(out?.exhausted, true)
+  assert.equal(out?.pct, 100)
+  assert.equal(out?.resetAt, now + 6 * HOUR)
 })

@@ -113,6 +113,7 @@ export function buildState(core: Core) {
     agents: core.config.agents,
     pace: core.config.pace,
     forecasts: core.forecasts(now),
+    learned: core.learned(now),
     chains: Object.fromEntries(Object.keys(core.config.chains).map((name) => [name, orderedChain(core.config, name).map(refLabel)])),
     warnings: core.warnings,
   }

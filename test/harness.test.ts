@@ -225,6 +225,30 @@ test("OpenRouter probe: leave when the key's limit is spent; free models have th
   core.pools.reset("openrouter:free")
 })
 
+test("xAI: the weekly pool is estimated from the times it ran out", () => {
+  const now = Date.now()
+  const DAY = 86_400_000
+  assert.ok(core.hasProvider("xai"))
+  const fresh = () => ((core as any).learnedCache = (core as any).forecastCache = undefined)
+  core.store.run("DELETE FROM pool_log WHERE pool = 'xai'")
+  fresh()
+  assert.equal(core.learned(now).xai, undefined)
+  for (let i = 1; i <= 12; i++) core.store.run("INSERT INTO steps (id, session_id, provider_id, model_id, started_at, ended_at, status, cost_equiv) VALUES (?, 'ses_learn', 'xai', 'grok-4.7', ?, ?, 'ok', 3)", `learn${i}`, now - i * DAY, now - i * DAY + 1000)
+  core.store.run("INSERT INTO pool_log (at, pool, status, kind, until) VALUES (?, 'xai', 'cooling', 'window', ?)", now - 4.5 * DAY, now - 3.5 * DAY)
+  fresh()
+  const x = core.learned(now).xai
+  assert.ok(x)
+  assert.equal(x.capacityUsd, 21, "seven days at $3 before it ran out")
+  assert.equal(x.usedUsd, 9, "three days since it came back")
+  assert.equal(x.resetAt, now - 3.5 * DAY + 7 * DAY)
+  const f = core.forecasts(now).find((w: any) => w.providerID === "xai")
+  assert.ok(f, "the estimate feeds the forecast")
+  assert.match(f.label, /estimated/)
+  core.store.run("DELETE FROM steps WHERE session_id = 'ses_learn'")
+  core.store.run("DELETE FROM pool_log WHERE pool = 'xai'")
+  fresh()
+})
+
 test("recorder: steps, costs and dashboard queries", async () => {
   const sid = "ses_rec"
   await onEvent(core, evt("session.created", { sessionID: sid, model: { providerID: "claude-agent", id: "opus" }, location: { directory: "/home/user/project" }, title: "Recorder" }))
