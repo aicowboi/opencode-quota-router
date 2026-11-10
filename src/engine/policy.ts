@@ -109,3 +109,9 @@ export function spendGate(config: Config, spent: Spend, now: number): Gate | und
   if (Object.keys(blocks).length === 0) return undefined
   return (entry) => ((config.providers[entry.providerID]?.kind ?? "metered") === "metered" ? (blocks[entry.providerID] ?? blocks["*"]) : undefined)
 }
+
+/** Providers known to be unable to serve right now, such as a local model server that is not running. */
+export function downGate(down: Record<string, string>): Gate | undefined {
+  if (Object.keys(down).length === 0) return undefined
+  return (entry) => (down[entry.providerID] ? { reason: down[entry.providerID] } : undefined)
+}

@@ -1,5 +1,6 @@
 // A health check of the whole setup: what is connected, what would be used, and what is likely to go wrong.
 // Read-only. Nothing here reads a credential, and paths are shown relative to the home directory.
+import { LOCAL_NAMES, localNote } from "./probes/local.ts"
 import { claudePlan } from "./engine/plans.ts"
 import fs from "node:fs"
 import os from "node:os"
@@ -84,6 +85,19 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   probe("probe-claude", "Claude", config.claude.usageProbe, core.hasProvider("claude-agent"), core.claude, "claude.usageProbe")
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
   probe("probe-openrouter", "OpenRouter", config.openrouter.usageProbe, core.hasProvider("openrouter"), core.openrouter, "openrouter.usageProbe")
+  for (const [kind, l] of core.local) {
+    const name = LOCAL_NAMES[kind]
+    if (!l.data) continue
+    if (!l.data.running) add({ id: `local-${kind}`, status: "warn", title: `${name} is not running`, detail: `Nothing answered at ${kind === "ollama" ? config.local.ollamaUrl : config.local.lmstudioUrl}. Routing passes it over until it does.`, fix: `Start ${name}, or set local.${kind}Url if it listens elsewhere.` })
+    else {
+      const loaded = l.data.models.filter((m) => m.loaded)
+      add({ id: `local-${kind}`, status: "ok", title: `${name} is running`, detail: loaded.length ? `In memory: ${loaded.map((m) => m.id).join(", ")}` : `${l.data.models.length} models installed, none in memory; the first request loads one, which takes a while.` })
+      for (const m of l.data.models) {
+        const note = localNote(m, core.totalMemory)
+        if (note && [...core.models.values()].some((x) => x.providerID === kind && x.id === m.id)) add({ id: `local-${kind}-${m.id}`, status: "warn", title: `${m.id} may be too large for this machine`, detail: `${note[0].toUpperCase()}${note.slice(1)}.`, fix: "Use a smaller model or quantisation, or take it out of the chain." })
+      }
+    }
+  }
   const xai = core.learned(now).xai
   if (xai) add({ id: "learned-xai", status: "info", title: `xAI weekly pool: about ${Math.round(xai.pct)}% used (estimated)`, detail: `xAI publishes no usage figures. From the ${xai.samples === 1 ? "one time" : `${xai.samples} times`} it ran out, the pool holds about $${xai.capacityUsd.toFixed(2)} of usage at list prices a week. Routing does not act on this estimate, except through the pace guard.` })
   if (core.chatgptActive()) add(core.chatgpt.at ? { id: "probe-chatgpt", status: "ok", title: "ChatGPT plan windows are being read", detail: `Last seen ${minutes(now - core.chatgpt.at)} ago` } : { id: "probe-chatgpt", status: "info", title: "ChatGPT plan windows appear after the first request" })

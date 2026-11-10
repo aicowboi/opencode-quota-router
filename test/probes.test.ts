@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { interpretClaudeUsage } from "../src/probes/claude.ts"
 import { findGithubToken, interpretCopilot } from "../src/probes/copilot.ts"
 import { findOpenRouterKey, interpretOpenRouter, nextOpenRouterReset } from "../src/probes/openrouter.ts"
+import { fetchLocal, interpretLmStudio, interpretOllama, localNote, localUrl } from "../src/probes/local.ts"
 import { headroom } from "../src/engine/headers.ts"
 
 const NOW = Date.parse("2026-11-09T12:00:00Z")
@@ -141,4 +142,47 @@ test("OpenRouter: the key's limit, a budget above it, and the free-model allowan
   assert.equal(findOpenRouterKey({ nested: { value: { apiKey: k } } }), k)
   assert.equal(findOpenRouterKey({ key: "sk-something-else" }), undefined)
   assert.equal(findOpenRouterKey(undefined), undefined)
+})
+
+test("local servers: what Ollama and LM Studio have installed and loaded, and whether it fits", async () => {
+  const GB = 1024 ** 3
+  const tags = { models: [{ name: "qwen4-coder:32b", size: 20 * GB }, { name: "llama5:70b", size: 43 * GB }] }
+  const ps = { models: [{ name: "qwen4-coder:32b", size: 22 * GB, size_vram: 11 * GB, context_length: 32768, expires_at: "2026-11-09T12:05:00Z" }] }
+  const ollama = interpretOllama(tags, ps)
+  assert.deepEqual(ollama[0], { id: "qwen4-coder:32b", loaded: true, sizeBytes: 22 * GB, gpuPct: 50, context: 32768, expiresAt: Date.parse("2026-11-09T12:05:00Z") })
+  assert.deepEqual(ollama[1], { id: "llama5:70b", loaded: false, sizeBytes: 43 * GB })
+  assert.match(localNote(ollama[0], 64 * GB) ?? "", /50% of it is on the GPU/)
+  assert.match(localNote(ollama[1], 32 * GB) ?? "", /43 GB, more than this machine's 32 GB/)
+  assert.equal(localNote(ollama[1], 64 * GB), undefined)
+  assert.deepEqual(interpretOllama(null, undefined), [])
+
+  const lm = interpretLmStudio({ models: [
+    { type: "llm", key: "example/coder-14b", size_bytes: 9 * GB, max_context_length: 131072, loaded_instances: [{ id: "example/coder-14b", config: { context_length: 16384 } }] },
+    { type: "llm", key: "example/big-70b", size_bytes: 40 * GB, loaded_instances: [] },
+    { type: "embedding", key: "example/embed", loaded_instances: [] },
+  ] })
+  assert.deepEqual(lm, [{ id: "example/coder-14b", loaded: true, sizeBytes: 9 * GB, context: 16384 }, { id: "example/big-70b", loaded: false, sizeBytes: 40 * GB, context: undefined }])
+  assert.equal(interpretLmStudio({ data: [{ id: "old-style", state: "loaded" }] })[0].loaded, true)
+
+  assert.equal(localUrl("http://127.0.0.1:11434", "/api/tags"), "http://127.0.0.1:11434/api/tags")
+  assert.equal(localUrl("file:///etc/passwd", "/api/tags"), undefined)
+  assert.equal(localUrl(["http://user:pw", "127.0.0.1"].join("@"), "/api/tags"), undefined)
+  assert.equal(localUrl("not a url", "/api/tags"), undefined)
+
+  const seen: string[] = []
+  const up = await fetchLocal("ollama", "http://127.0.0.1:11434", async (url) => {
+    seen.push(url)
+    return new Response(JSON.stringify(url.endsWith("/api/ps") ? ps : tags), { status: 200 })
+  })
+  assert.equal(up.running, true)
+  assert.equal(up.models.length, 2)
+  assert.deepEqual(seen, ["http://127.0.0.1:11434/api/tags", "http://127.0.0.1:11434/api/ps"])
+  const down = await fetchLocal("lmstudio", "http://127.0.0.1:1234", async () => {
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } })
+  })
+  assert.deepEqual(down, { running: false, models: [], error: "ECONNREFUSED" })
+  // An older LM Studio without /api/v1 still counts as running.
+  const old = await fetchLocal("lmstudio", "http://127.0.0.1:1234", async (url) => (url.includes("/v1/") ? new Response("", { status: 404 }) : new Response(JSON.stringify({ data: [{ id: "m", state: "loaded" }] }), { status: 200 })))
+  assert.equal(old.running, true)
+  assert.equal(old.models[0].loaded, true)
 })

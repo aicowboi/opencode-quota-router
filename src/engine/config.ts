@@ -86,6 +86,12 @@ export type Config = {
     /** Dollars kept back, to absorb requests already under way. */
     reserveUsd: number
   }
+  local: {
+    /** Ask Ollama and LM Studio whether they are running and what is loaded, and pass them over while they are not. */
+    healthCheck: boolean
+    ollamaUrl: string
+    lmstudioUrl: string
+  }
   probes: { activeIntervalMs: number; idleIntervalMs: number; maxAgeAtTurnMs: number }
   headers: { observe: string[]; warnRemainingPct: number }
   /** `menubar` shows the macOS menu bar item (OpenCode Desktop only). */
@@ -194,6 +200,7 @@ export const DEFAULTS: Config = {
   claude: { usageProbe: false, avoidUsageCredits: true, cutoverAtPct: 98, warnAtPct: 85, plan: "" },
   copilot: { usageProbe: false, plan: "", avoidAdditionalCredits: true, reserveFraction: 0.01, monthlyCredits: 0, economyAtPct: 0, economyOutputPrice: 15 },
   openrouter: { usageProbe: false, reserveUsd: 0 },
+  local: { healthCheck: true, ollamaUrl: "http://127.0.0.1:11434", lmstudioUrl: "http://127.0.0.1:1234" },
   probes: { activeIntervalMs: 3 * 60_000, idleIntervalMs: 15 * 60_000, maxAgeAtTurnMs: 60_000 },
   headers: { observe: ["anthropic", "github-copilot"], warnRemainingPct: 5 },
   dashboard: { enabled: true, port: 47321, host: "127.0.0.1", menubar: true },
@@ -228,7 +235,7 @@ const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"])
  * Settings that only take effect from `opencode.jsonc`: changing where the dashboard listens needs a restart and a
  * deliberate edit, and where telemetry is sent must not be changeable by anything that can reach the dashboard.
  */
-export const LOCKED_SETTINGS = ["dashboard.host", "dashboard.port", "explicitProviders", "telemetry.endpoint", "telemetry.headers"]
+export const LOCKED_SETTINGS = ["dashboard.host", "dashboard.port", "explicitProviders", "telemetry.endpoint", "telemetry.headers", "local.ollamaUrl", "local.lmstudioUrl"]
 
 /** Lay one options object over another. Objects merge key by key; anything else in `patch` replaces the base value. */
 export function overlay(base: unknown, patch: unknown): Record<string, unknown> {

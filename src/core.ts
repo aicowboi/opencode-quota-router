@@ -1,15 +1,17 @@
 // Process-wide state shared by every plugin instance: pools, sessions, store, usage probes, dashboard.
 import path from "node:path"
+import os from "node:os"
 import { feed, raise, type AlertInput } from "./alerts.ts"
 import { checkSetting, loadConfig, overlay, refKey, refLabel, type Config } from "./engine/config.ts"
 import { modelPools } from "./engine/classify.ts"
 import { localDay, Store } from "./db.ts"
 import { dataDir, Logger } from "./log.ts"
-import { composeGates, economyGate, saveGate, spendBlocks, spendGate, type Gate, type Saved, type Spend } from "./engine/policy.ts"
+import { composeGates, downGate, economyGate, saveGate, spendBlocks, spendGate, type Gate, type Saved, type Spend } from "./engine/policy.ts"
 import { PoolStore } from "./engine/pools.ts"
 import { estimate } from "./engine/pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
 import { fetchCopilotUser, findGithubToken, interpretCopilot, type CopilotQuota } from "./probes/copilot.ts"
+import { fetchLocal, LOCAL_NAMES, type LocalHealth, type LocalKind } from "./probes/local.ts"
 import { learnPool, type LearnedPool, type PoolSpend } from "./engine/learn.ts"
 import { fetchOpenRouterKey, findOpenRouterKey, interpretOpenRouter, type OpenRouterCredit } from "./probes/openrouter.ts"
 import { markDirty, optimize, prune, refreshSessions, rollupDirty } from "./maintenance.ts"
@@ -74,6 +76,9 @@ export class Core {
   claude: ProbeStatus<ClaudeUsage> & { lastExtraUsed?: number; plan?: { type?: string; tier?: string } } = { ok: false }
   copilot: ProbeStatus<CopilotQuota> = { ok: false }
   openrouter: ProbeStatus<OpenRouterCredit> = { ok: false }
+  /** Model servers on this machine: whether each is running and what it has loaded. */
+  local = new Map<LocalKind, ProbeStatus<LocalHealth>>()
+  readonly totalMemory = os.totalmem()
   /** ChatGPT plan windows, read from response headers while OpenAI is signed in with ChatGPT. */
   chatgpt: ProbeStatus<{ windows: CodexWindow[] }> = { ok: false }
   /** How each connected provider is signed in. */
@@ -86,7 +91,7 @@ export class Core {
   private pendingKinds = new Set<string>()
   private notifyTimer?: ReturnType<typeof setTimeout>
   private timers: Array<ReturnType<typeof setInterval>> = []
-  private probing = { claude: false, copilot: false, openrouter: false }
+  private probing = { claude: false, copilot: false, openrouter: false, local: false }
   private lastSnapshot = new Map<string, { json: string; at: number }>()
   private maintaining = false
   shutdown?: () => Promise<void>
@@ -222,6 +227,7 @@ export class Core {
   policies: Array<(s?: SessionState) => Gate | undefined> = [
     () => spendGate(this.config, this.spend(), Date.now()),
     () => saveGate(this.saved(), Date.now()),
+    () => downGate(this.localDown()),
     () => economyGate(this.config, this.copilot.data && this.copilot.data.entitlement > 0 ? (this.copilot.data.used / this.copilot.data.entitlement) * 100 : undefined, this.models),
     (s) => (this.config.pace.enabled && s && this.isLight(s) ? paceGate(this.config, this.forecasts(), true, Date.now()) : undefined),
   ]
@@ -229,6 +235,39 @@ export class Core {
   /** Light work for the pace guard: a subagent's session, or a session run by one of the agents listed. */
   isLight(s: SessionState) {
     return Boolean(s.parentID) || (s.agent !== undefined && this.config.pace.lightAgents.includes(s.agent))
+  }
+
+  /** Local servers seen not running at a check recent enough to trust. */
+  localDown(now = Date.now()): Record<string, string> {
+    const down: Record<string, string> = {}
+    if (!this.config.local.healthCheck) return down
+    for (const [kind, status] of this.local) if (status.data && !status.data.running && status.at && now - status.at < 3 * 60_000) down[kind] = `${LOCAL_NAMES[kind]} is not running`
+    return down
+  }
+
+  async probeLocal(force = false) {
+    const cfg = this.config.local
+    if (!cfg.healthCheck || this.probing.local) return
+    const servers = ([["ollama", cfg.ollamaUrl], ["lmstudio", cfg.lmstudioUrl]] as const).filter(([kind]) => this.hasProvider(kind))
+    if (servers.length === 0) return
+    this.probing.local = true
+    try {
+      await Promise.all(
+        servers.map(async ([kind, url]) => {
+          const prev = this.local.get(kind)
+          const now = Date.now()
+          if (!force && prev?.nextAt && now < prev.nextAt) return
+          const health = await fetchLocal(kind, url)
+          this.local.set(kind, { at: Date.now(), ok: health.running && !health.error, data: health, message: health.running ? health.error : `${LOCAL_NAMES[kind]} is not running at ${url}`, nextAt: now + 30_000 })
+          if (prev?.data && prev.data.running !== health.running) this.log.info("local", { server: kind, running: health.running })
+        }),
+      )
+    } catch (error) {
+      this.log.warn("local health check failed", { error: String(error) })
+    } finally {
+      this.probing.local = false
+      this.notify("usage")
+    }
   }
 
   private forecastCache?: { at: number; list: WindowForecast[] }
@@ -886,6 +925,7 @@ export class Core {
     if (providers.includes("claude-agent") && (!this.claude.at || Date.now() - this.claude.at > maxAge)) tasks.push(this.probeClaude(true))
     if (providers.includes("github-copilot") && (!this.copilot.at || Date.now() - this.copilot.at > maxAge)) tasks.push(this.probeCopilot(true))
     if (providers.includes("openrouter") && (!this.openrouter.at || Date.now() - this.openrouter.at > Math.max(maxAge, 2 * 60_000))) tasks.push(this.probeOpenRouter(true))
+    if ((["ollama", "lmstudio"] as const).some((k) => providers.includes(k) && Date.now() - (this.local.get(k)?.at ?? 0) > Math.min(maxAge, 60_000))) tasks.push(this.probeLocal(true))
     if (tasks.length) await Promise.race([Promise.allSettled(tasks), new Promise((r) => setTimeout(r, 2500))])
   }
 
@@ -898,6 +938,9 @@ export class Core {
       const copilotBusy = [...this.recorder.live.values()].some((e) => e.step?.model?.providerID === "github-copilot")
       if (!this.copilot.at || Date.now() - this.copilot.at >= (copilotBusy ? 60_000 : interval)) void this.probeCopilot(true)
       if (!this.openrouter.at || Date.now() - this.openrouter.at >= interval) void this.probeOpenRouter(true)
+      // A server that was down is looked at every tick, so it is used again soon after it starts.
+      const localAt = Math.min(...[...this.local.values()].map((l) => l.at ?? 0), this.local.size ? Infinity : 0)
+      if (Object.keys(this.localDown()).length || Date.now() - localAt >= (active ? 60_000 : interval)) void this.probeLocal(true)
       void this.refreshModels()
       this.maintain()
       this.checkAlerts()

@@ -3,7 +3,7 @@ import fs from "node:fs"
 import assert from "node:assert/strict"
 import { classify, modelPools } from "../src/engine/classify.ts"
 import { checkSetting, loadConfig, overlay, parseRef, withSetting } from "../src/engine/config.ts"
-import { composeGates, economyGate, parseUntil, saveGate, spendBlocks, spendGate } from "../src/engine/policy.ts"
+import { composeGates, downGate, economyGate, parseUntil, saveGate, spendBlocks, spendGate } from "../src/engine/policy.ts"
 import { forecast, paceGate, type WindowForecast } from "../src/engine/forecast.ts"
 import { advise, claudePlan, copilotPlan, PLANS } from "../src/engine/plans.ts"
 import { nextMidnightIn, parseDuration, parseResetText, parseRetryAfter, parseRetryText, nextMonthUtc } from "../src/engine/resets.ts"
@@ -559,4 +559,13 @@ test("learned pool: the size of a pool from the times it ran out", () => {
   assert.equal(out?.exhausted, true)
   assert.equal(out?.pct, 100)
   assert.equal(out?.resetAt, now + 6 * HOUR)
+})
+
+test("a local server that is not running is passed over", () => {
+  assert.equal(downGate({}), undefined)
+  const gate = downGate({ ollama: "Ollama is not running" })
+  assert.deepEqual(gate?.({ providerID: "ollama", id: "qwen4-coder:32b" }), { reason: "Ollama is not running" })
+  assert.equal(gate?.({ providerID: "anthropic", id: "claude-opus-5-5" }), undefined)
+  assert.equal(checkSetting({}, {}, "local.ollamaUrl", "http://203.0.113.5:11434").ok, false, "where health checks go is set in opencode.jsonc only")
+  assert.equal(checkSetting({}, {}, "local.healthCheck", false).ok, true)
 })

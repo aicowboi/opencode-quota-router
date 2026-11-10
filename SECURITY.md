@@ -11,6 +11,7 @@ quota-router runs entirely on your machine. It has no analytics and no server of
 | Claude Code's login from the macOS keychain (or `~/.claude/.credentials.json`) | Only with `claude.usageProbe: true` | Read your Claude subscription windows from the endpoint Claude Code's `/usage` uses. The token is never stored, logged or refreshed. |
 | OpenCode's stored GitHub Copilot login | Only with `copilot.usageProbe: true` | Read your Copilot monthly allowance |
 | OpenCode's stored OpenRouter key, or `OPENROUTER_API_KEY` | Only with `openrouter.usageProbe: true` | Read how much of the key's spending limit is left. The key is sent only to `openrouter.ai`, and is never stored or logged; the key's label is discarded. |
+| The list of installed and loaded models from Ollama or LM Studio on this machine | When one of them is connected (`local.healthCheck`, on by default) | Pass a server over while it is not running, and show what is loaded. The address is `127.0.0.1` unless you set another in `opencode.jsonc`; it cannot be changed from the dashboard. |
 | Rate-limit response headers from configured providers | `headers.observe` | Headroom before a limit is hit |
 
 ## Where it sends data

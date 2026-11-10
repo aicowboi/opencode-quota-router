@@ -152,6 +152,8 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 - **Copilot:** uses OpenCode's stored GitHub login to read your monthly allowance, and stops routing to Copilot before paid credits beyond it are used. Business and Enterprise seats share credits across the organisation, so your seat's share is used (1,900 or 3,900 a month); set `copilot.monthlyCredits` if yours differs.
 - **OpenRouter:** asks OpenRouter's documented `GET /api/v1/key` endpoint, with the key OpenCode already holds (or `OPENROUTER_API_KEY`), how much of the key's spending limit is left. The dashboard shows "$4.50 left on the key limit" and when it resets, and routing leaves OpenRouter once the limit, or a workspace or guardrail budget above it, is spent. It also reads how many free-model requests are left today, so `:free` models are passed over when those run out while paid models stay usable. OpenRouter does not report the account's credit balance to an ordinary key, so a key with no limit shows what it has spent and nothing more; running out of account credit is still caught from the error.
 
+**Local models are checked without any setting.** When Ollama or LM Studio is connected, quota-router asks it (on `127.0.0.1`, nothing leaves your machine) whether it is running and what it has in memory. A server that is not running is passed over instead of being tried and failing, and is used again within half a minute of being started. The dashboard shows what is loaded, and `/router doctor` warns about a model larger than this machine's memory, or one that Ollama has loaded partly on the CPU. Set `local.ollamaUrl` or `local.lmstudioUrl` if yours listens elsewhere, or `local.healthCheck: false` to turn it off.
+
 **xAI needs no setting.** xAI publishes no usage figures, so quota-router learns the size of the SuperGrok weekly pool instead: each time it runs out, the usage in the week before, valued at list prices, is a reading of what it holds. From the first time on, the dashboard shows an estimated gauge ("about 60%"), and the forecast can say when it is on pace to run out. It is an estimate and is labelled as one: routing never leaves xAI because of it, and only the pace guard, if you turn it on, takes it into account.
 
 ### 5. Check it's working
@@ -250,6 +252,8 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `copilot.economyAtPct` / `economyOutputPrice` | 0 (off) / 15 | Once this much of the allowance is used, models priced at this many dollars per million output tokens or more go to another provider when one can run them |
 | `openrouter.usageProbe` | false | Check how much of the OpenRouter key's spending limit is left (see step 4) |
 | `openrouter.reserveUsd` | 0 | Dollars of that limit kept back, to absorb requests already under way |
+| `local.healthCheck` | true | Ask Ollama and LM Studio whether they are running and what is loaded; pass them over while they are not |
+| `local.ollamaUrl` / `lmstudioUrl` | `http://127.0.0.1:11434` / `http://127.0.0.1:1234` | Where those servers listen. Only settable in `opencode.jsonc` |
 | `copilot.monthlyCredits` | 0 (plan default) | Your included credits on a pooled Business or Enterprise seat |
 | `pace.enabled` | false | Pace guard: subagents pass over a plan that is on pace to run out before it resets. Needs a usage check (step 4) or a ChatGPT sign-in |
 | `pace.lightAgents` | none | Agents whose sessions are treated like subagents by the pace guard, for example `["explore"]` |

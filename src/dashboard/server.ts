@@ -1,5 +1,6 @@
 // Local-only dashboard server. Binds to 127.0.0.1, checks the Host header (DNS rebinding) and requires a
 // custom header on actions (cross-site requests cannot send one without a preflight we never allow).
+import { localNote } from "../probes/local.ts"
 import http from "node:http"
 import { refLabel } from "../engine/config.ts"
 import { VERSION, type Core } from "../core.ts"
@@ -114,6 +115,7 @@ export function buildState(core: Core) {
     pace: core.config.pace,
     forecasts: core.forecasts(now),
     learned: core.learned(now),
+    local: Object.fromEntries([...core.local].map(([kind, l]) => [kind, { at: l.at, running: l.data?.running, message: l.message, models: (l.data?.models ?? []).map((m) => ({ ...m, note: localNote(m, core.totalMemory) })) }])),
     chains: Object.fromEntries(Object.keys(core.config.chains).map((name) => [name, orderedChain(core.config, name).map(refLabel)])),
     warnings: core.warnings,
   }

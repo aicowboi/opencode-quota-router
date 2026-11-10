@@ -456,6 +456,13 @@ function renderLadder() {
       cap = gauge("Rate limit", main.utilization, Math.round(main.utilization) + "%", col)
     } else if (p.connected && !inChain.has(p.id)) {
       cap = '<div class="note">In no chain yet, so never routed to.' + (s.suggestions.some((x) => x.providerID === p.id) ? " See the suggestions below." : "") + "</div>"
+    } else if ((s.local || {})[p.id] && s.local[p.id].running != null) {
+      const lo = s.local[p.id], loaded = lo.models.filter((m) => m.loaded), gbs = (b) => (b / 1073741824).toFixed(b < 10737418240 ? 1 : 0) + " GB"
+      if (!lo.running) cap = '<div class="note"><span class="st-warn">Not running</span> · routing passes it over until it is started</div>'
+      else {
+        cap = '<div class="note">Running · ' + (loaded.length ? "in memory: " + loaded.map((m) => esc(m.id) + (m.sizeBytes ? " (" + gbs(m.sizeBytes) + (m.gpuPct != null && m.gpuPct < 100 ? ", " + m.gpuPct + "% on GPU" : "") + ")" : "")).join(", ") : fmtInt(lo.models.length) + " installed, none in memory yet") + "</div>"
+        for (const m of lo.models.filter((m) => m.note)) cap += '<div class="note"><span class="st-warn">' + esc(m.id) + "</span> · " + esc(m.note) + "</div>"
+      }
     } else cap = '<div class="note">' + (p.kind === "metered" ? "Pay-per-use; used only when every subscription is limited." : p.kind === "local" ? "Runs on this machine at no cost; the last resort." : "") + "</div>"
     // Pay-per-use: spend against the tightest cap that applies, or a plain note of what was spent.
     const sp = s.spend
