@@ -16,6 +16,8 @@ quota-router runs entirely on your machine. It has no analytics and no server of
 | Rate-limit response headers from configured providers | `headers.observe` | Headroom before a limit is hit |
 | Claude Code's logs (`~/.claude/projects`), Codex's logs (`~/.codex/sessions`) and OpenCode's database, read-only | Only when you run `quota-router usage` or `limits` | Token counts, model names, times and project folders for the totals. Prompts and replies in those logs are skipped, not kept. What was read is cached in `~/.cache/quota-router`, created readable only by you |
 
+The optional Claude Code Router rule reads only its own config file (`~/.config/quota-router/ccr.json`) and asks the dashboard on `127.0.0.1` for provider states. The LiteLLM callback reads nothing and keeps everything in memory; it never stores API keys, only a short hash to tell accounts apart.
+
 ## Where it sends data
 
 Only to the providers you already use: `api.anthropic.com` for the Claude usage check, `api.github.com` for the Copilot usage check, and `openrouter.ai` for the OpenRouter credit check. Nothing else leaves your machine by default.

@@ -37,6 +37,7 @@ quota-router uses it in this order:
 - [Commands](#commands)
 - [Command line](#command-line)
 - [LiteLLM](#litellm)
+- [Claude Code Router](#claude-code-router-experimental)
 - [Configuration reference](#configuration-reference)
 - [Errors it handles](#errors-it-handles)
 - [FAQ](#faq)
@@ -300,6 +301,10 @@ when = true
 ## LiteLLM
 
 The same limit handling is available for [LiteLLM](https://docs.litellm.ai) as one Python file: [`integrations/litellm`](integrations/litellm). Add it as a callback to a LiteLLM Router or Proxy. After a deployment hits a limit, it sets that deployment aside until the limit resets, so requests go to the model group's other deployments.
+
+## Claude Code Router (experimental)
+
+If you also use [Claude Code Router](https://github.com/musistudio/claude-code-router), a CCR routing rule in [`integrations/claude-code-router`](integrations/claude-code-router) starts its requests on a provider quota-router knows has room, and puts limited ones at the end of the chain CCR falls back through.
 
 ## Configuration reference
 

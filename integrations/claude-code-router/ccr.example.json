@@ -1,0 +1,17 @@
+{
+  "port": 47321,
+  "routes": [
+    {
+      "match": "claude-opus",
+      "chain": [
+        { "model": "Claude/claude-opus-5-5", "provider": "claude-agent" },
+        { "model": "Copilot/claude-opus-5.5", "provider": "github-copilot" },
+        { "model": "Anthropic/claude-opus-5-5", "provider": "anthropic" }
+      ]
+    },
+    {
+      "match": "*",
+      "chain": ["Copilot/claude-sonnet-5.5", "Anthropic/claude-sonnet-5-5"]
+    }
+  ]
+}

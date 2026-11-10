@@ -383,6 +383,18 @@ test("dashboard serves the page and state, and rejects foreign hosts", async () 
     assert.ok(Array.isArray(state.providers) && state.providers[0].id === "claude-agent")
     assert.deepEqual(Object.keys(await (await fetch(`${d.url}/api/notifications?after=0`)).json()), ["alerts", "last"])
     assert.deepEqual(Object.keys(await (await fetch(`${d.url}/api/status`)).json()).slice(0, 4), ["now", "enabled", "paused", "dryRun"])
+    // The Claude Code Router rule reads the menu bar feed; run it against the real one.
+    const rule = fs.readFileSync(new URL("../integrations/claude-code-router/quota-router-route.js", import.meta.url), "utf8")
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+    const port = Number(new URL(d.url).port)
+    core.pools.report({ kind: "window", pools: ["claude-agent"], resetAt: Date.now() + 3_600_000, evidence: "5-hour limit" })
+    const ccr = await new AsyncFunction("input", "api", rule)({ model: "claude-opus-5-5", body: {} }, {
+      env: () => undefined,
+      fs: { exists: async () => true, readJson: async () => ({ port, routes: [{ match: "claude", chain: [{ model: "Claude/opus", provider: "claude-agent" }, "Anthropic/claude-opus-5-5"] }] }) },
+      fetch: async (url: string) => { const r = await fetch(url); return { ok: r.ok, status: r.status, body: await r.text() } },
+    })
+    assert.deepEqual(ccr, { model: "Anthropic/claude-opus-5-5", fallback: { mode: "model-chain", models: ["Claude/opus"], retryCount: 0 } })
+    core.pools.reset("claude-agent", "test")
     const doctor: any = await (await fetch(`${d.url}/api/doctor`)).json()
     assert.ok(doctor.checks.some((c: any) => c.id === "routing" && c.status === "ok"))
     // fetch cannot override Host, so use a raw request, as a DNS-rebinding page would produce.
