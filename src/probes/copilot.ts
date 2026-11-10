@@ -1,5 +1,5 @@
 // GitHub Copilot monthly allowance, from the endpoint Copilot's own editors use. Undocumented.
-import { parseTimestamp } from "../resets.ts"
+import { parseTimestamp } from "../engine/resets.ts"
 
 export type CopilotQuota = {
   plan?: string

@@ -195,7 +195,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 
 ## Configuration reference
 
-All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in [`src/config.ts`](src/config.ts).
+All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in [`src/engine/config.ts`](src/engine/config.ts).
 
 | Option | Default | Meaning |
 |---|---|---|

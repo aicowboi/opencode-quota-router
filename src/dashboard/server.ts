@@ -1,9 +1,9 @@
 // Local-only dashboard server. Binds to 127.0.0.1, checks the Host header (DNS rebinding) and requires a
 // custom header on actions (cross-site requests cannot send one without a preflight we never allow).
 import http from "node:http"
-import { refLabel } from "../config.ts"
+import { refLabel } from "../engine/config.ts"
 import { VERSION, type Core } from "../core.ts"
-import { orderedChain } from "../router.ts"
+import { orderedChain } from "../engine/router.ts"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"

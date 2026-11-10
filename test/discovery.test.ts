@@ -1,12 +1,12 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { classify } from "../src/classify.ts"
-import { loadConfig } from "../src/config.ts"
-import { applyDiscovery, kindOf, suggest, withAdditions, type ConnectionMethod } from "../src/discovery.ts"
-import { codexWindows } from "../src/headers.ts"
-import { estimate } from "../src/pricing.ts"
-import { orderedChain } from "../src/router.ts"
-import type { ModelInfo } from "../src/types.ts"
+import { classify } from "../src/engine/classify.ts"
+import { loadConfig } from "../src/engine/config.ts"
+import { applyDiscovery, kindOf, suggest, withAdditions, type ConnectionMethod } from "../src/engine/discovery.ts"
+import { codexWindows } from "../src/engine/headers.ts"
+import { estimate } from "../src/engine/pricing.ts"
+import { orderedChain } from "../src/engine/router.ts"
+import type { ModelInfo } from "../src/engine/types.ts"
 
 const NOW = new Date(2026, 10, 9, 11, 0, 0).getTime()
 

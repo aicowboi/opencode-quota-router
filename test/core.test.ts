@@ -1,12 +1,12 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { classify, modelPools } from "../src/classify.ts"
-import { loadConfig, parseRef } from "../src/config.ts"
-import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/resets.ts"
-import { PoolStore } from "../src/pools.ts"
-import { findInChains, mapVariant, orderedChain, route } from "../src/router.ts"
-import { costOf, estimate } from "../src/pricing.ts"
-import type { ModelInfo } from "../src/types.ts"
+import { classify, modelPools } from "../src/engine/classify.ts"
+import { loadConfig, parseRef } from "../src/engine/config.ts"
+import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/engine/resets.ts"
+import { PoolStore } from "../src/engine/pools.ts"
+import { findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
+import { costOf, estimate } from "../src/engine/pricing.ts"
+import type { ModelInfo } from "../src/engine/types.ts"
 
 // Monday 2026-11-09 11:00 local
 const NOW = new Date(2026, 10, 9, 11, 0, 0).getTime()

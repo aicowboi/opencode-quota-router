@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { interpretClaudeUsage } from "../src/probes/claude.ts"
 import { findGithubToken, interpretCopilot } from "../src/probes/copilot.ts"
-import { headroom } from "../src/headers.ts"
+import { headroom } from "../src/engine/headers.ts"
 
 const NOW = Date.parse("2026-11-09T12:00:00Z")
 

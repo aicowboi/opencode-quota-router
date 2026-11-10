@@ -1,7 +1,7 @@
 // Records OpenCode session events into the local store and keeps a live view of running work.
 import { localDay, type Store } from "./db.ts"
 import { markDirty } from "./maintenance.ts"
-import type { ModelRef, Tokens } from "./types.ts"
+import type { ModelRef, Tokens } from "./engine/types.ts"
 
 type Event = { id: string; type: string; created: number; data: Record<string, any> }
 

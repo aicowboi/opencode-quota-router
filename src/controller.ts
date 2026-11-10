@@ -1,10 +1,10 @@
 // Routing decisions wired to OpenCode hooks and events.
-import { classify } from "./classify.ts"
-import { refKey, refLabel } from "./config.ts"
+import { classify } from "./engine/classify.ts"
+import { refKey, refLabel } from "./engine/config.ts"
 import type { Core, SessionState } from "./core.ts"
-import { orderedChain, route } from "./router.ts"
-import type { CodexWindow } from "./headers.ts"
-import type { ModelRef, SessionError } from "./types.ts"
+import { orderedChain, route } from "./engine/router.ts"
+import type { CodexWindow } from "./engine/headers.ts"
+import type { ModelRef, SessionError } from "./engine/types.ts"
 
 const same = (a?: ModelRef, b?: ModelRef, variant = true) =>
   !!a && !!b && a.providerID === b.providerID && a.id === b.id && (!variant || (a.variant ?? "default") === (b.variant ?? "default"))
