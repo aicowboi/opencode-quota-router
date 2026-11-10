@@ -11,7 +11,7 @@ export type Menubar = {
   url?: string
   claude?: { windows: Array<{ pool: string; label: string; utilization: number; resetAt?: number }>; extra?: { enabled: boolean; used: number; limit?: number; currency?: string } }
   copilot?: { name: string; plan?: string; entitlement: number; used?: number; remaining: number; overageUsed: number; resetAt?: number }
-  providers: Array<{ id: string; priority: number; kind: string; status: string; until?: number; evidence?: string; serving: number }>
+  providers: Array<{ id: string; priority: number; kind: string; status: string; until?: number; evidence?: string; serving: number; saved?: number }>
   live: Array<{ title: string; project?: string; startedAt: number; model?: string; fallback?: string }>
   today: { tokens: number; equiv: number; actual: number; steps: number }
   alerts?: Array<{ id: number; at: number; kind: string; title: string; body?: string }>
@@ -124,7 +124,9 @@ export function present(data: Menubar | undefined, cutoverAtPct = 98): View {
 
   const route: Item[] = data.providers.map((p) => {
     const state =
-      (p.status === "cooling" || p.status === "blocked") && (p.until ?? 0) > now
+      (p.saved ?? 0) > now
+        ? `Saved for later until ${when(p.saved!, now)}`
+        : (p.status === "cooling" || p.status === "blocked") && (p.until ?? 0) > now
         ? `Limited until ${when(p.until!, now)}`
         : p.serving
           ? `Serving ${p.serving}`

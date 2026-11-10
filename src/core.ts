@@ -5,7 +5,7 @@ import { checkSetting, loadConfig, overlay, refKey, refLabel, type Config } from
 import { modelPools } from "./engine/classify.ts"
 import { localDay, Store } from "./db.ts"
 import { dataDir, Logger } from "./log.ts"
-import { composeGates, spendBlocks, spendGate, type Gate, type Spend } from "./engine/policy.ts"
+import { composeGates, saveGate, spendBlocks, spendGate, type Gate, type Saved, type Spend } from "./engine/policy.ts"
 import { PoolStore } from "./engine/pools.ts"
 import { estimate } from "./engine/pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
@@ -204,7 +204,34 @@ export class Core {
   }
 
   /** Routing policies beyond pool health. Each feature adds its own; the router asks them in order. */
-  policies: Array<() => Gate | undefined> = [() => spendGate(this.config, this.spend(), Date.now())]
+  policies: Array<(s?: SessionState) => Gate | undefined> = [() => spendGate(this.config, this.spend(), Date.now()), () => saveGate(this.saved(), Date.now())]
+
+  /** Providers set aside for later, and until when. Kept in the database, so a restart does not forget them. */
+  saved(now = Date.now()): Saved {
+    const stored = this.metaJSON<Saved>("saved", {})
+    return Object.fromEntries(Object.entries(stored && typeof stored === "object" ? stored : {}).filter(([, until]) => typeof until === "number" && until > now))
+  }
+
+  /** Set a provider aside until a time, or with no time, make it available again. */
+  save(providerID: string, until?: number) {
+    const next = this.saved()
+    if (until && until > Date.now()) next[providerID] = until
+    else delete next[providerID]
+    this.store.setMeta("saved", JSON.stringify(next))
+    this.log.info("save", { provider: providerID, until: until && new Date(until).toISOString() })
+    this.notify("pools")
+  }
+
+  /** The provider a word means: its ID, a common name for it, or the only provider whose ID contains the word. */
+  findProvider(word: string): string | undefined {
+    const w = word.toLowerCase()
+    const ids = Object.keys(this.config.providers)
+    const alias: Record<string, string> = { claude: "claude-agent", copilot: "github-copilot", github: "github-copilot", chatgpt: "openai", gpt: "openai", codex: "openai", grok: "xai", gemini: "google" }
+    if (ids.includes(w)) return w
+    if (alias[w] && ids.includes(alias[w])) return alias[w]
+    const found = ids.filter((id) => id.includes(w))
+    return found.length === 1 ? found[0] : undefined
+  }
 
   private spendCache?: { at: number; spend: Spend }
 
@@ -230,8 +257,8 @@ export class Core {
     return spendBlocks(this.config, this.spend(now), now)
   }
 
-  gate(): Gate | undefined {
-    return composeGates(this.policies.map((p) => p()))
+  gate(s?: SessionState): Gate | undefined {
+    return composeGates(this.policies.map((p) => p(s)))
   }
 
   chainAdditions(): Record<string, string[]> {

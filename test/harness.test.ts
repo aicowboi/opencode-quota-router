@@ -568,3 +568,71 @@ test("notifications: raised once per event, rate-limited, switchable, and read t
   ;(core as any).spendCache = undefined
   core.setOptions({ claude: { usageProbe: false }, copilot: { usageProbe: false }, backfill: false, dashboard: { enabled: false } })
 })
+
+test("save for later: routing passes a saved provider over until its time or until it is released", async () => {
+  const sid = "ses_save"
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  assert.equal(core.findProvider("grok"), "xai")
+  assert.equal(core.findProvider("claude"), "claude-agent")
+  assert.equal(core.findProvider("nothing-like-this"), undefined)
+
+  core.save("xai", Date.now() + 3_600_000)
+  assert.deepEqual(Object.keys(core.saved()), ["xai"])
+  harness.sessionModels.set(sid, opus)
+  await onEvent(core, evt("session.created", { sessionID: sid, model: opus }))
+  await onRetry(core, {
+    sessionID: sid,
+    model: opus,
+    error: { type: "provider.unknown", message: `Claude Code subscription limit reached (five hour). Resets at ${new Date(Date.now() + 3_600_000).toISOString()}.` },
+    attempt: 2,
+    decision: { retry: false },
+  } as any)
+  await flush()
+  // xAI is next in the chain but set aside, so the request goes one further.
+  const to = harness.calls.switches.at(-1)
+  assert.equal(to.sessionID, sid)
+  assert.notEqual(to.model.providerID, "xai")
+  assert.notEqual(to.model.providerID, "claude-agent")
+
+  const { buildState } = await import("../src/dashboard/server.ts")
+  assert.ok(buildState(core).saved.xai > Date.now())
+  const { runDoctor } = await import("../src/doctor.ts")
+  assert.ok(runDoctor(core).some((c: any) => c.id === "saved-xai" && c.status === "info"))
+
+  // Saving the provider a session is on moves that session at its next turn.
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  core.save("xai")
+  assert.deepEqual(core.saved(), {})
+  const sid2 = "ses_save2"
+  harness.sessionModels.set(sid2, opus)
+  await onEvent(core, evt("session.created", { sessionID: sid2, model: opus }))
+  core.save("claude-agent", Date.now() + 3_600_000)
+  await onPrompt(core, { sessionID: sid2 })
+  await flush()
+  assert.equal(harness.calls.switches.at(-1).sessionID, sid2)
+  assert.equal(harness.calls.switches.at(-1).model.providerID, "xai")
+  // Released early, the session returns.
+  core.save("claude-agent")
+  await onPrompt(core, { sessionID: sid2 })
+  await flush()
+  assert.equal(harness.calls.switches.at(-1).model.providerID, "claude-agent")
+
+  // The dashboard actions take a provider that exists and a span of at most a week.
+  core.config.dashboard.port = 47900 + Math.floor(Math.random() * 90)
+  const d = await startDashboard(core)
+  assert.ok(d)
+  try {
+    const post = (body: unknown) => fetch(`${d.url}/api/action`, { method: "POST", headers: { "x-quota-router": "1", "content-type": "application/json" }, body: JSON.stringify(body) })
+    await post({ action: "save", provider: "xai", minutes: 120 })
+    assert.ok(Math.abs(core.saved().xai - Date.now() - 7_200_000) < 5_000)
+    await post({ action: "save", provider: "not-a-provider", minutes: 120 })
+    await post({ action: "save", provider: "openai", minutes: 999_999 })
+    assert.deepEqual(Object.keys(core.saved()), ["xai"])
+    await post({ action: "unsave", provider: "xai" })
+    assert.deepEqual(core.saved(), {})
+  } finally {
+    await d.stop()
+  }
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+})

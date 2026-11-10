@@ -84,6 +84,9 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
   if (core.chatgptActive()) add(core.chatgpt.at ? { id: "probe-chatgpt", status: "ok", title: "ChatGPT plan windows are being read", detail: `Last seen ${minutes(now - core.chatgpt.at)} ago` } : { id: "probe-chatgpt", status: "info", title: "ChatGPT plan windows appear after the first request" })
 
+  // Providers set aside
+  for (const [id, until] of Object.entries(core.saved(now))) add({ id: `saved-${id}`, status: "info", title: `${id} is saved for later`, detail: `Routing passes it over until ${new Date(until).toLocaleString()}.`, fix: `/router save ${id} off ends it early.` })
+
   // Notifications
   const nf = config.notifications
   const off = Object.entries(nf.events).filter(([, on]) => !on).map(([k]) => k)

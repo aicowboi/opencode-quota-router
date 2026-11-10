@@ -440,12 +440,15 @@ function renderLadder() {
     }
 
     let st
+    const savedUntil = (s.saved || {})[p.id]
     if (!p.connected) st = '<span class="muted">Not connected</span>'
+    else if (savedUntil > Date.now()) st = '<span class="st-info">Saved for later</span><span class="why">Not routed to until ' + esc(fmtWhen(savedUntil)) + ' · <button class="linkish" data-unsave="' + esc(p.id) + '">Use now</button></span>'
     else if (lim) st = '<span class="' + (lim.status === "blocked" ? "st-bad" : "st-warn") + '">Limited · back ' + esc(fmtWhen(lim.until)) + '</span><span class="why">' + esc(lim.evidence || lim.kind) + ' · <button class="linkish" data-reset="' + esc(lim.id) + '">Clear</button></span>'
     else if (p.pools.some((x) => (x.status === "cooling" || x.status === "blocked") && x.until <= Date.now())) st = '<span class="st-info">Ready to retry</span><span class="why">The next request tries it again</span>'
     else if (serving[p.id]) st = '<span class="st-ok">Serving ' + serving[p.id] + " " + plural(serving[p.id], "session") + "</span>"
     else if (p.pools.some((x) => x.status === "degraded")) st = '<span class="st-warn">Near its limit</span>'
     else st = '<span class="soft">Available</span>'
+    if (p.connected && p.kind === "subscription" && !lim && !(savedUntil > Date.now())) st += '<span class="why"><button class="linkish" data-save="' + esc(p.id) + '" title="Routing passes this provider over for two hours, so its allowance is there when you want it">Save for 2 hours</button></span>'
     for (const sub of p.pools.filter((x) => x.id !== p.id && (x.status === "cooling" || x.status === "blocked") && x.until > Date.now()))
       st += '<span class="why">' + esc(sub.id.split(":")[1]) + " limited until " + esc(fmtWhen(sub.until)) + "</span>"
 
@@ -456,6 +459,8 @@ function renderLadder() {
       "<div>" + cap + '</div><div class="state">' + st + '</div><div class="usage">' + use + "</div></div>"
   }).join("")
   for (const b of $("ladder").querySelectorAll("[data-reset]")) b.onclick = () => act({ action: "reset-pool", pool: b.dataset.reset })
+  for (const b of $("ladder").querySelectorAll("[data-save]")) b.onclick = () => act({ action: "save", provider: b.dataset.save, minutes: 120 })
+  for (const b of $("ladder").querySelectorAll("[data-unsave]")) b.onclick = () => act({ action: "unsave", provider: b.dataset.unsave })
   renderSuggest()
 }
 

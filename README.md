@@ -170,6 +170,8 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 - **When everything is limited,** the request waits for the earliest reset, up to 30 minutes per retry. A failed session is continued once at that reset, if nothing else happened in it.
 - **Your choice of model** sets the chain and effort level. Routing still uses the highest-priority provider with capacity; use `/router pin` to keep one session on one provider.
 
+**Want to keep a plan for later?** `/router save claude 2h` sets the Claude subscription aside for two hours, so what is left of its allowance is there for the work you want it for. Routing passes a saved provider over as if it were limited: sessions on it move to the next entry in their chain at their next turn, and return when the time is up or when you run `/router save claude off`. The dashboard has the same control on each subscription ("Save for 2 hours" and "Use now"). A saved provider stays saved across restarts. If every other entry in a chain is limited, the session waits; it does not fall back onto the provider you saved.
+
 ## Dashboard and menu bar
 
 **Dashboard:** `http://127.0.0.1:47321` while OpenCode runs, or `/router`. Local only. It shows:
@@ -201,6 +203,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 | `/router pause` | Pause routing for every session |
 | `/router resume` | Resume routing for every session |
 | `/router dry-run on` / `off` | Record what routing would do without moving any session |
+| `/router save <provider> [2h]` | Set a provider aside for later: routing passes it over for `90m`, `2h`, `1d` or until a time such as `17:00` (two hours if left out, a week at most). `/router save <provider> off` ends it, `/router save off` ends all, `/router save` lists them |
 | `/router doctor` | Run the health check and open it on the dashboard |
 | `/router telemetry on` / `off` | Turn the OpenTelemetry export on or off (the endpoint comes from `opencode.jsonc` or `OTEL_*`) |
 

@@ -21,6 +21,7 @@ export function buildMenubar(core: Core) {
   const today = q.summary(core.store, q.resolveRange("today", now))
   const last = core.store.get<Record<string, any>>("SELECT r.at, r.trigger, r.from_model, r.to_model, r.evidence, se.title FROM routing r LEFT JOIN sessions se ON se.id = r.session_id ORDER BY r.id DESC LIMIT 1")
   const title = (id: string) => core.store.get<{ title: string; directory: string }>("SELECT title, directory FROM sessions WHERE id = ?", id)
+  const saved = core.saved(now)
   const providers = Object.entries(core.config.providers)
     .sort((a, b) => a[1].priority - b[1].priority)
     .filter(([id]) => core.hasProvider(id))
@@ -34,6 +35,7 @@ export function buildMenubar(core: Core) {
         status: limited ? limited.status : pools.some((x) => x.status === "degraded") ? "degraded" : "available",
         until: limited?.until,
         evidence: limited?.evidence,
+        saved: saved[id] as number | undefined,
         serving: live.filter((e) => e.step?.model?.providerID === id || core.sessions.get(e.sessionID)?.current?.providerID === id).length,
       }
     })
@@ -99,6 +101,7 @@ export function buildState(core: Core) {
     claude: { ok: core.claude.ok, at: core.claude.at, message: core.claude.message, data: core.claude.data, enabled: core.config.claude.usageProbe, cutoverAtPct: core.config.claude.cutoverAtPct },
     copilot: { ok: core.copilot.ok, at: core.copilot.at, message: core.copilot.message, data: core.copilot.data, enabled: core.config.copilot.usageProbe, reserveFraction: core.config.copilot.reserveFraction },
     chatgpt: { active: core.chatgptActive(), at: core.chatgpt.at, data: core.chatgpt.data, cutoverAtPct: core.config.chatgpt.cutoverAtPct },
+    saved: core.saved(now),
     spend: { ...core.config.spend, ...core.spend(now), blocked: core.spendBlocks(now) },
     suggestions: core.suggestions(),
     added: core.chainAdditions(),
@@ -229,6 +232,9 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           else if (a.action === "pause") core.paused = true
           else if (a.action === "resume") core.paused = false
           else if (a.action === "dry-run" && typeof a.on === "boolean") core.setSetting("dryRun", a.on)
+          else if (a.action === "save" && typeof a.provider === "string" && core.config.providers[a.provider] && Number.isFinite(a.minutes) && a.minutes >= 1 && a.minutes <= 7 * 1440)
+            core.save(a.provider, Date.now() + Math.round(a.minutes) * 60_000)
+          else if (a.action === "unsave" && typeof a.provider === "string") core.save(a.provider)
           else if (a.action === "probe") await Promise.allSettled([core.probeClaude(true), core.probeCopilot(true)])
           else if (["chain-add", "chain-ignore", "chain-remove"].includes(a.action) && typeof a.chain === "string" && typeof a.ref === "string" && core.config.chains[a.chain] && /^[^/\s]+\/[^\s]+$/.test(a.ref))
             core.changeChain(a.action.slice(6) as "add" | "ignore" | "remove", a.chain, a.ref)

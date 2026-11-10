@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { classify, modelPools } from "../src/engine/classify.ts"
 import { checkSetting, loadConfig, overlay, parseRef, withSetting } from "../src/engine/config.ts"
-import { composeGates, spendBlocks, spendGate } from "../src/engine/policy.ts"
+import { composeGates, parseUntil, saveGate, spendBlocks, spendGate } from "../src/engine/policy.ts"
 import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
 import { findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
@@ -299,4 +299,22 @@ test("spend caps: pay-per-use providers are passed over once a cap is reached", 
 
   const bad = loadConfig({ spend: { dailyUsd: "5", providers: { anthropic: { weeklyUsd: 1 } } } })
   assert.deepEqual(bad.warnings, ["Option spend.dailyUsd should be number; default kept", "Unknown option spend.providers.anthropic.weeklyUsd ignored"])
+})
+
+test("save for later: a saved provider is gated until its time, and spans parse", () => {
+  assert.equal(saveGate({}, NOW), undefined)
+  assert.equal(saveGate({ xai: NOW - 1 }, NOW), undefined)
+  const gate = saveGate({ xai: NOW + 3_600_000 }, NOW)!
+  assert.deepEqual(gate({ providerID: "xai", id: "grok-4.7" }), { reason: `saved for later until ${new Date(NOW + 3_600_000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`, until: NOW + 3_600_000 })
+  assert.equal(gate({ providerID: "openai", id: "gpt-6.1-sol" }), undefined)
+
+  assert.equal(parseUntil("90m", NOW), NOW + 90 * 60_000)
+  assert.equal(parseUntil("2h", NOW), NOW + 7_200_000)
+  assert.equal(parseUntil("1.5 hours", NOW), NOW + 5_400_000)
+  assert.equal(parseUntil("1d", NOW), NOW + 86_400_000)
+  assert.equal(parseUntil("7d", NOW), NOW + 7 * 86_400_000)
+  // NOW is 11:00 local: a later time is today, an earlier one tomorrow.
+  assert.equal(parseUntil("17:00", NOW), new Date(2026, 10, 9, 17, 0, 0).getTime())
+  assert.equal(parseUntil("9:30", NOW), new Date(2026, 10, 10, 9, 30, 0).getTime())
+  for (const bad of ["", "0h", "8d", "-2h", "25:00", "12:75", "soon", "2w"]) assert.equal(parseUntil(bad, NOW), undefined, bad)
 })

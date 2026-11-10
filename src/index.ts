@@ -1,4 +1,5 @@
 // quota-router: quota-aware provider routing for OpenCode V2, with a local usage dashboard.
+import { parseUntil } from "./engine/policy.ts"
 import { backfill } from "./backfill.ts"
 import { refLabel } from "./engine/config.ts"
 import { onCodexResponse, onEvent, onHttpResponse, onPrompt, onRetry } from "./controller.ts"
@@ -106,6 +107,7 @@ function statusText(core: Core, sessionID: string): string {
     lines.push(`This session: ${s.current ? refLabel(s.current) : "?"} (preferred ${refLabel(s.preferred.model)}, chain ${s.preferred.chain}${s.pinned ? ", pinned" : ""})`)
     lines.push(`Chain: ${orderedChain(core.config, s.preferred.chain).map(refLabel).join(" → ")}`)
   } else lines.push("This session's model is in no chain, so it is not routed.")
+  for (const [id, until] of Object.entries(core.saved())) lines.push(`- ${id}: saved for later until ${new Date(until).toLocaleString()}`)
   for (const p of core.pools.all()) {
     const when = p.until ? ` until ${new Date(p.until).toLocaleString()}` : ""
     lines.push(`- ${p.id}: ${p.status}${when}${p.utilization !== undefined ? `, ${Math.round(p.utilization)}% used` : ""}${p.evidence ? ` (${p.evidence})` : ""}`)
@@ -148,11 +150,11 @@ export default {
     await ctx.command.transform((editor: any) => {
       editor.add({
         name: "router",
-        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | doctor | telemetry on|off",
+        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | save <provider> [2h|17:00|off] | doctor | telemetry on|off",
         execute: async (input: { sessionID: string; prompt: { text?: string } }) => {
           const { sessionID, prompt } = input
           core.log.info("command", { sessionID, text: prompt?.text })
-          const [verb = "status", arg] = (prompt?.text ?? "").trim().split(/\s+/).filter(Boolean)
+          const [verb = "status", arg, arg2] = (prompt?.text ?? "").trim().split(/\s+/).filter(Boolean)
           const s = core.session(sessionID)
           let text: string
           switch (verb) {
@@ -182,6 +184,38 @@ export default {
               const on = arg !== "off"
               const r = core.setSetting("dryRun", on)
               text = !r.ok ? r.error : on ? "Dry run is on: routing decisions are recorded on the dashboard, and no session is moved." : "Dry run is off: routing is live again."
+              break
+            }
+            case "save": {
+              // `/router save claude 2h` keeps Claude for later; `/router save claude off` or `/router save off` ends it.
+              const saved = core.saved()
+              if (!arg) {
+                const list = Object.entries(saved).map(([id, until]) => `${id} until ${new Date(until).toLocaleString()}`)
+                text = list.length ? `Saved for later: ${list.join("; ")}.` : "Nothing is saved for later. Use /router save <provider> 2h."
+                break
+              }
+              if (arg === "off") {
+                for (const id of Object.keys(saved)) core.save(id)
+                text = "Every provider is available to routing again."
+                break
+              }
+              const id = core.findProvider(arg)
+              if (!id) {
+                text = `No provider matches "${arg}". Providers: ${Object.keys(core.config.providers).join(", ")}.`
+                break
+              }
+              if (arg2 === "off") {
+                core.save(id)
+                text = `${id} is available to routing again.`
+                break
+              }
+              const until = parseUntil(arg2 ?? "2h", Date.now())
+              if (!until) {
+                text = `"${arg2}" is not a time span. Use 90m, 2h, 1d or a time such as 17:00 (at most a week).`
+                break
+              }
+              core.save(id, until)
+              text = `${id} is saved for later: routing passes it over until ${new Date(until).toLocaleString()}. Sessions on it move at their next turn. /router save ${arg} off ends it early.`
               break
             }
             case "telemetry": {
