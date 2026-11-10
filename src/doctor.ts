@@ -59,6 +59,15 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
     if (missing.length) add({ id: `chain-${name}-missing`, status: "warn", title: `Chain ${name}: model not offered`, detail: missing.map(refLabel).join(", "), fix: "Change the entry to a model that provider lists, in chains." })
   }
 
+  // Spend caps
+  const metered = connected.filter((id) => inChains.has(id) && config.providers[id]?.kind === "metered" && config.providers[id]?.allow !== "never")
+  const capped = config.spend.dailyUsd > 0 || config.spend.monthlyUsd > 0
+  const blocks = core.spendBlocks(now)
+  for (const [id, b] of Object.entries(blocks)) add({ id: `spend-${id}`, status: "warn", title: id === "*" ? "Spend cap reached for pay-per-use providers" : `Spend cap reached for ${id}`, detail: `${b.reason}; routing passes ${id === "*" ? "them" : "it"} over until ${new Date(b.until ?? now).toLocaleString()}` })
+  if (metered.length && !capped && metered.some((id) => !config.spend.providers[id]))
+    add({ id: "spend", status: "info", title: "No spend cap on pay-per-use providers", detail: `${metered.join(", ")} can be used without limit when every subscription is limited.`, fix: 'Set "spend": { "dailyUsd": 10 } to cap what routing may spend.' })
+  else if (metered.length && !Object.keys(blocks).length) add({ id: "spend", status: "ok", title: "Spend caps are set", detail: [config.spend.dailyUsd && `$${config.spend.dailyUsd} a day`, config.spend.monthlyUsd && `$${config.spend.monthlyUsd} a month`, ...Object.entries(config.spend.providers).map(([id, c]) => `${id}: ${[c.dailyUsd && `$${c.dailyUsd} a day`, c.monthlyUsd && `$${c.monthlyUsd} a month`].filter(Boolean).join(", ")}`)].filter(Boolean).join(" · ") })
+
   // Limits in force
   const limited = core.pools.all().filter((p) => (p.status === "cooling" || p.status === "blocked") && (p.until ?? 0) > now)
   for (const p of limited) add({ id: `pool-${p.id}`, status: "info", title: `${p.id} is limited for ${minutes((p.until ?? now) - now)}`, detail: p.evidence, fix: `If that is wrong, run /router reset ${p.id}.` })

@@ -13,6 +13,8 @@ export type ProviderConfig = {
   kindFromUser?: boolean
 }
 
+export type SpendCap = { dailyUsd: number; monthlyUsd: number }
+
 export type Config = {
   enabled: boolean
   /** Record what routing would do without changing any session's model or retry. For trying the plugin out safely. */
@@ -57,6 +59,11 @@ export type Config = {
   /** `menubar` shows the macOS menu bar item (OpenCode Desktop only). */
   dashboard: { enabled: boolean; port: number; host: string; menubar: boolean }
   backfill: boolean
+  /**
+   * Limits on what pay-per-use providers may cost, in US dollars per local day and month. 0 means no limit. Once a
+   * limit is reached, routing stops choosing that provider until the day or month ends.
+   */
+  spend: { dailyUsd: number; monthlyUsd: number; providers: Record<string, SpendCap> }
   /** Days of raw detail to keep. Daily rollups, steps, routing and sessions are kept for good. */
   retention: { toolsDays: number; executionsDays: number; snapshotsDays: number; poolLogDays: number }
   log: { level: "debug" | "info" | "warn" }
@@ -124,6 +131,7 @@ export const DEFAULTS: Config = {
   headers: { observe: ["anthropic", "github-copilot"], warnRemainingPct: 5 },
   dashboard: { enabled: true, port: 47321, host: "127.0.0.1", menubar: true },
   backfill: true,
+  spend: { dailyUsd: 0, monthlyUsd: 0, providers: {} },
   retention: { toolsDays: 400, executionsDays: 400, snapshotsDays: 90, poolLogDays: 730 },
   log: { level: "info" },
 }
@@ -214,6 +222,9 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
   delete opts.chains
   delete opts.providers
   delete opts.explicitProviders
+  // Per-provider caps are keyed by provider ID, so they are read separately from the fixed options.
+  const rawCaps = isObject(opts.spend) ? opts.spend.providers : undefined
+  if (isObject(opts.spend)) opts.spend = { ...opts.spend, providers: {} }
   const config = merge(DEFAULTS, opts, "", warnings)
 
   config.providers = { ...DEFAULTS.providers }
@@ -225,6 +236,13 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
       if (isObject(value) && "kind" in value) config.providers[id].kindFromUser = true
     }
   }
+
+  config.spend = { ...config.spend, providers: {} }
+  if (isObject(rawCaps)) {
+    for (const [id, value] of Object.entries(rawCaps)) {
+      if (!UNSAFE_KEYS.has(id)) config.spend.providers[id] = merge({ dailyUsd: 0, monthlyUsd: 0 }, value, `spend.providers.${id}.`, warnings)
+    }
+  } else if (rawCaps !== undefined) warnings.push("spend.providers should be an object of provider: { dailyUsd, monthlyUsd }; ignored")
 
   config.chains = { ...DEFAULTS.chains }
   if (isObject(rawChains)) {

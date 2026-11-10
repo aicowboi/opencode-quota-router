@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { classify, modelPools } from "../src/engine/classify.ts"
 import { checkSetting, loadConfig, overlay, parseRef, withSetting } from "../src/engine/config.ts"
-import { composeGates } from "../src/engine/policy.ts"
+import { composeGates, spendBlocks, spendGate } from "../src/engine/policy.ts"
 import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
 import { findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
@@ -100,7 +100,7 @@ test("modelPools splits Claude families", () => {
   assert.deepEqual(modelPools("xai", "grok-4.7"), ["xai"])
 })
 
-const cfg = () => loadConfig({}).config
+const cfg = (options: unknown = {}) => loadConfig(options).config
 
 test("config: defaults, overrides and warnings", () => {
   const { config, warnings } = loadConfig({ throttle: { maxWaitMs: 5000 }, bogus: 1, chains: { opus: ["a/b", "bad"] }, providers: { xai: { priority: 9 } } })
@@ -232,10 +232,10 @@ test("router: a policy gate passes over an entry and reports when to look again"
   const r = route({ config, pools, models: MODELS, preferred, mode: "turn", gate })
   assert.equal(r.target?.providerID, "xai")
   assert.deepEqual(r.skipped, ["claude-agent/opus: daily cap reached"])
-  const all = route({ config, pools, models: MODELS, preferred, mode: "turn", gate: (e) => ({ reason: "blocked", until: e.providerID === "openai" ? NOW + 5 : NOW + 50 }) })
+  // A policy is never waited out: with everything passed over there is nothing to retry on.
+  const all = route({ config, pools, models: MODELS, preferred, mode: "turn", gate: () => ({ reason: "blocked", until: NOW + 5 }) })
   assert.equal(all.target, undefined)
-  assert.equal(!all.target ? all.earliest : 0, NOW + 5)
-  assert.equal(!all.target ? all.next?.providerID : "", "openai")
+  assert.equal(!all.target ? all.earliest : 0, undefined)
   assert.equal(composeGates([undefined]), undefined)
 })
 
@@ -266,4 +266,37 @@ test("stored settings: overlay, paths and validation", () => {
   assert.equal(({} as Record<string, unknown>).polluted, undefined)
   // A problem that was already in the configuration does not block an unrelated change.
   assert.ok(checkSetting({ typo: 1 }, {}, "claude.warnAtPct", 70).ok)
+})
+
+test("spend caps: pay-per-use providers are passed over once a cap is reached", () => {
+  const anthropic = parseRef("anthropic/claude-opus-5-5")
+  const openai = parseRef("openai/gpt-6.1-sol")
+  const claude = parseRef("claude-agent/opus")
+  const spent = { day: { anthropic: 4, openai: 1 }, month: { anthropic: 40, openai: 12 } }
+  assert.equal(spendGate(cfg(), spent, NOW), undefined)
+
+  // A provider's own cap blocks only that provider, until the next local day.
+  let config = cfg({ spend: { providers: { anthropic: { dailyUsd: 4 } } } })
+  let gate = spendGate(config, spent, NOW)!
+  assert.match(gate(anthropic)!.reason, /daily spend cap reached \(\$4\.00 of \$4\.00 on anthropic\)/)
+  assert.equal(gate(anthropic)!.until, new Date(2026, 10, 10).getTime())
+  assert.equal(gate(openai), undefined)
+
+  // A cap across providers blocks every pay-per-use provider and never a subscription.
+  config = cfg({ spend: { monthlyUsd: 50 } })
+  gate = spendGate(config, spent, NOW)!
+  assert.match(gate(openai)!.reason, /monthly spend cap reached \(\$52\.00 of \$50\.00 across/)
+  assert.equal(gate(openai)!.until, new Date(2026, 11, 1).getTime())
+  assert.equal(gate(claude), undefined)
+  assert.deepEqual(Object.keys(spendBlocks(config, spent, NOW)), ["*"])
+
+  // With the subscriptions limited and the APIs capped, there is nothing to fail over to.
+  const pools = new PoolStore(config, () => NOW)
+  for (const p of ["claude-agent", "xai", "github-copilot"]) pools.report({ kind: "window", pools: [p], resetAt: NOW + 3_600_000, evidence: "x" })
+  const r = route({ config, pools, models: MODELS, preferred: { chain: "opus", index: 0 }, mode: "failover", gate })
+  assert.equal(r.target, undefined)
+  assert.ok(r.skipped.some((x) => x.startsWith("anthropic/claude-opus-5-5: monthly spend cap reached")))
+
+  const bad = loadConfig({ spend: { dailyUsd: "5", providers: { anthropic: { weeklyUsd: 1 } } } })
+  assert.deepEqual(bad.warnings, ["Option spend.dailyUsd should be number; default kept", "Unknown option spend.providers.anthropic.weeklyUsd ignored"])
 })

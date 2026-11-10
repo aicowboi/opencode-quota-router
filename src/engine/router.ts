@@ -104,14 +104,13 @@ export function route(input: {
       skipped.push(`${label}: context ${info.context} too small`)
       continue
     }
-    const variant = mapVariant(entry, baseline, preferred.variant, info.variants)
-    const target: ModelRef = { providerID: entry.providerID, id: entry.id, ...(variant ? { variant } : {}) }
     const block = input.gate?.(entry)
     if (block) {
       skipped.push(`${label}: ${block.reason}`)
-      if (block.until && (!next || block.until < next.at)) next = { target, at: block.until }
       continue
     }
+    const variant = mapVariant(entry, baseline, preferred.variant, info.variants)
+    const target: ModelRef = { providerID: entry.providerID, id: entry.id, ...(variant ? { variant } : {}) }
     const states = entryPools.map((p) => pools.usable(p))
     const usable = states.includes("no") ? "no" : states.includes("trial") ? "trial" : "yes"
     if (usable === "no") {

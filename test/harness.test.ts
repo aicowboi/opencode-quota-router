@@ -445,3 +445,41 @@ test("doctor reports the setup without touching credentials", async () => {
   core.pools.reset("xai", "test")
   core.setOptions({ claude: { usageProbe: false }, copilot: { usageProbe: false }, backfill: false, dashboard: { enabled: false } })
 })
+
+test("spend cap: recorded spend stops failover onto a pay-per-use provider", async () => {
+  const sid = "ses_cap"
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  const { localDay } = await import("../src/db.ts")
+  core.store.run("INSERT INTO steps (id, session_id, provider_id, model_id, started_at, day, status, cost_actual) VALUES ('cap1', 'ses_other', 'anthropic', 'claude-opus-5-5', ?, ?, 'ok', 6.5)", Date.now(), localDay(Date.now()))
+  assert.deepEqual(core.setSetting("spend.providers.anthropic.dailyUsd", 5), { ok: true })
+  assert.deepEqual(core.setSetting("spend.providers.openai.dailyUsd", 0.01), { ok: true })
+  ;(core as any).spendCache = undefined
+  const already = core.store.get("SELECT COALESCE(SUM(cost_actual), 0) AS n FROM steps WHERE provider_id = 'anthropic' AND id != 'cap1'").n
+  assert.equal(Math.round((core.spend().day.anthropic - already) * 100), 650)
+  assert.deepEqual(Object.keys(core.spendBlocks()), ["anthropic"])
+
+  harness.sessionModels.set(sid, opus)
+  await onEvent(core, evt("session.created", { sessionID: sid, model: opus }))
+  for (const p of ["xai", "github-copilot"]) core.pools.report({ kind: "window", pools: [p], resetAt: Date.now() + 3_600_000, evidence: "limit" })
+  const e: any = {
+    sessionID: sid,
+    model: opus,
+    error: { type: "provider.unknown", message: `Claude Code subscription limit reached (five hour). Resets at ${new Date(Date.now() + 3_600_000).toISOString()}.` },
+    attempt: 2,
+    decision: { retry: false },
+  }
+  await onRetry(core, e)
+  await flush()
+  // Anthropic is capped, so the request goes to OpenAI, which has spent nothing yet.
+  assert.deepEqual(harness.calls.switches.at(-1).model, { providerID: "openai", id: "gpt-6.1-sol", variant: "high" })
+  const state = (await import("../src/dashboard/server.ts")).buildState(core)
+  assert.match(state.spend.blocked.anthropic.reason, /daily spend cap reached/)
+  const { runDoctor } = await import("../src/doctor.ts")
+  assert.ok(runDoctor(core).some((c: any) => c.id === "spend-anthropic" && c.status === "warn"))
+
+  core.setSetting("spend", undefined)
+  core.store.run("DELETE FROM steps WHERE id = 'cap1'")
+  ;(core as any).spendCache = undefined
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+})

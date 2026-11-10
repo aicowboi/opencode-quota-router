@@ -95,3 +95,14 @@ export function parseResetText(text: string, now: number): number | undefined {
   }
   return undefined
 }
+
+/** The start of the next local day, and of the next local month. Spend caps count in local time, like the dashboard's days. */
+export function nextLocalDay(now: number): number {
+  const d = new Date(now)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime()
+}
+
+export function nextLocalMonth(now: number): number {
+  const d = new Date(now)
+  return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime()
+}

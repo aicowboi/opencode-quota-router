@@ -424,6 +424,15 @@ function renderLadder() {
     } else if (p.connected && !inChain.has(p.id)) {
       cap = '<div class="note">In no chain yet, so never routed to.' + (s.suggestions.some((x) => x.providerID === p.id) ? " See the suggestions below." : "") + "</div>"
     } else cap = '<div class="note">' + (p.kind === "metered" ? "Pay-per-use; used only when every subscription is limited." : p.kind === "local" ? "Runs on this machine at no cost; the last resort." : "") + "</div>"
+    // Pay-per-use: spend against the tightest cap that applies, or a plain note of what was spent.
+    const sp = s.spend
+    if (sp && p.kind === "metered" && p.connected) {
+      const own = sp.providers[p.id] || {}, blk = sp.blocked[p.id] || sp.blocked["*"]
+      const caps = [["today", n(sp.day[p.id]), n(own.dailyUsd)], ["this month", n(sp.month[p.id]), n(own.monthlyUsd)]].filter((c) => c[2] > 0)
+      if (caps.length) { cap = ""; for (const [l, used, limit] of caps) cap += gauge(l === "today" ? "Today" : "Month", used / limit * 100, fmtUSD(used) + " / " + fmtUSD(limit), col, 100) }
+      if (blk) cap += '<div class="note"><span class="st-warn">Spend cap reached</span> · ' + esc(blk.reason) + " · not routed to until " + esc(fmtWhen(blk.until)) + "</div>"
+      else if (!caps.length && (sp.dailyUsd || sp.monthlyUsd)) cap += '<div class="note">Shared cap: ' + [sp.dailyUsd ? fmtUSD(Object.values(sp.day).reduce((a, b) => a + b, 0)) + " of " + fmtUSD(sp.dailyUsd) + " today" : "", sp.monthlyUsd ? fmtUSD(Object.values(sp.month).reduce((a, b) => a + b, 0)) + " of " + fmtUSD(sp.monthlyUsd) + " this month" : ""].filter(Boolean).join(" · ") + "</div>"
+    }
 
     let st
     if (!p.connected) st = '<span class="muted">Not connected</span>'

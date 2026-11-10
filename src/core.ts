@@ -2,9 +2,9 @@
 import path from "node:path"
 import { checkSetting, loadConfig, overlay, refKey, refLabel, type Config } from "./engine/config.ts"
 import { modelPools } from "./engine/classify.ts"
-import { Store } from "./db.ts"
+import { localDay, Store } from "./db.ts"
 import { dataDir, Logger } from "./log.ts"
-import { composeGates, type Gate } from "./engine/policy.ts"
+import { composeGates, spendBlocks, spendGate, type Gate, type Spend } from "./engine/policy.ts"
 import { PoolStore } from "./engine/pools.ts"
 import { estimate } from "./engine/pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
@@ -199,7 +199,31 @@ export class Core {
   }
 
   /** Routing policies beyond pool health. Each feature adds its own; the router asks them in order. */
-  policies: Array<() => Gate | undefined> = []
+  policies: Array<() => Gate | undefined> = [() => spendGate(this.config, this.spend(), Date.now())]
+
+  private spendCache?: { at: number; spend: Spend }
+
+  /** What pay-per-use providers have cost today and this month. Read from recorded requests, and cached briefly. */
+  spend(now = Date.now()): Spend {
+    if (this.spendCache && now - this.spendCache.at < 5_000 && now >= this.spendCache.at) return this.spendCache.spend
+    const today = localDay(now)
+    const rows = this.store.all<{ p: string; d: number; m: number }>(
+      "SELECT provider_id AS p, SUM(CASE WHEN day = ? THEN cost_actual ELSE 0 END) AS d, SUM(cost_actual) AS m FROM steps WHERE day >= ? AND cost_actual > 0 GROUP BY provider_id",
+      today, `${today.slice(0, 8)}01`,
+    )
+    const spend: Spend = { day: {}, month: {} }
+    for (const r of rows) {
+      if (r.d > 0) spend.day[r.p] = r.d
+      spend.month[r.p] = r.m
+    }
+    this.spendCache = { at: now, spend }
+    return spend
+  }
+
+  /** Spend caps reached right now, by provider (`*` for the cap across all of them). */
+  spendBlocks(now = Date.now()) {
+    return spendBlocks(this.config, this.spend(now), now)
+  }
 
   gate(): Gate | undefined {
     return composeGates(this.policies.map((p) => p()))

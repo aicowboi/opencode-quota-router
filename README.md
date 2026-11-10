@@ -220,6 +220,8 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `copilot.usageProbe` | false | Check Copilot's monthly allowance (see step 4) |
 | `copilot.avoidAdditionalCredits` / `reserveFraction` | true / 0.01 | Leave Copilot before paid credits beyond the allowance |
 | `copilot.monthlyCredits` | 0 (plan default) | Your included credits on a pooled Business or Enterprise seat |
+| `spend.dailyUsd` / `monthlyUsd` | 0 (no cap) | Most that pay-per-use providers may cost in a local day or month, in US dollars |
+| `spend.providers.<id>.dailyUsd` / `monthlyUsd` | 0 (no cap) | The same, for one provider |
 | `headers.observe` | anthropic, github-copilot | Providers whose rate-limit headers are read. Adding `openai` or `xai` turns off their WebSocket transport. |
 | `dashboard.enabled` / `port` / `menubar` | true / 47321 / true | Local dashboard and menu bar item |
 | `backfill` | true | Import earlier OpenCode usage on first start |
@@ -252,7 +254,13 @@ Install quota-router and connect at least one other provider: Copilot, ChatGPT, 
 No. It's an OpenCode plugin and uses OpenCode's retry and routing hooks. It does use your Claude subscription through OpenCode's Claude provider, and your ChatGPT plan through "Sign in with ChatGPT".
 
 **Will it spend money without asking?**
-Only on providers you've connected with an API key, and only when every subscription ahead of them is limited. Set `"allow": "never"` on a provider to keep it out. The dashboard shows actual spend separately from the value of your subscription use.
+Only on providers you've connected with an API key, and only when every subscription ahead of them is limited. Set `"allow": "never"` on a provider to keep it out, or cap what routing may spend:
+
+```jsonc
+"spend": { "dailyUsd": 10, "monthlyUsd": 100, "providers": { "openai": { "dailyUsd": 3 } } }
+```
+
+Once a cap is reached, routing passes that provider over until the day or month ends, and a session already on it moves to another provider at its next turn if one is free. Spend is counted from the requests quota-router recorded, so a request in flight can take it slightly past the cap, and a cap doesn't stop you picking a pay-per-use model yourself in a pinned session. The dashboard shows actual spend separately from the value of your subscription use.
 
 **Can I use a local model as the last resort?**
 Yes. Connect Ollama, LM Studio or vLLM in OpenCode, then add the suggested entry on the dashboard or set it in `chains`. Local models rank last and count as free.

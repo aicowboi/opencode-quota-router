@@ -98,6 +98,7 @@ export function buildState(core: Core) {
     claude: { ok: core.claude.ok, at: core.claude.at, message: core.claude.message, data: core.claude.data, enabled: core.config.claude.usageProbe, cutoverAtPct: core.config.claude.cutoverAtPct },
     copilot: { ok: core.copilot.ok, at: core.copilot.at, message: core.copilot.message, data: core.copilot.data, enabled: core.config.copilot.usageProbe, reserveFraction: core.config.copilot.reserveFraction },
     chatgpt: { active: core.chatgptActive(), at: core.chatgpt.at, data: core.chatgpt.data, cutoverAtPct: core.config.chatgpt.cutoverAtPct },
+    spend: { ...core.config.spend, ...core.spend(now), blocked: core.spendBlocks(now) },
     suggestions: core.suggestions(),
     added: core.chainAdditions(),
     live,
