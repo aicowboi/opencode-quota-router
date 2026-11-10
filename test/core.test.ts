@@ -11,6 +11,7 @@ import { PoolStore } from "../src/engine/pools.ts"
 import { fasterFirst, findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
 import { costOf, estimate } from "../src/engine/pricing.ts"
 import { healthGate, speedOf, summariseHealth, unreliable } from "../src/engine/health.ts"
+import { combineRules, matchProject, parseRules, ruledOut, rulesGate } from "../src/engine/rules.ts"
 import { learnPool } from "../src/engine/learn.ts"
 import type { ModelInfo } from "../src/engine/types.ts"
 
@@ -616,4 +617,48 @@ test("health: time to first token, error rate, and what routing does with them",
   assert.deepEqual(ids(fasterFirst(config, orderedChain(config, "opus"), speedOf(health))), ids(fasterFirst(config, orderedChain(config, "opus"))), "different priorities are never reordered")
   const p1 = { ...findInChains(tied, { providerID: "claude-agent", id: "opus" })!, variant: "medium" }
   assert.equal(route({ config: tied, pools, models: MODELS, preferred: p1, mode: "turn", speed: speedOf(health) }).target?.providerID, "xai")
+})
+
+test("project rules: a project can shut providers out; only your own settings can choose its chain", () => {
+  const config = cfg({ projects: { "/work/client-x": { deny: ["xai"], denyKinds: ["local"], chain: "sonnet" }, "/work": { allow: ["claude-agent", "anthropic", "xai"] }, "/bad": { chain: "nope", deny: "xai", extra: 1 } } })
+  assert.equal(config.projects["/work/client-x"].chain, "sonnet")
+  assert.deepEqual(config.projects["/bad"], { deny: [], allow: undefined, denyKinds: [], source: "your settings" })
+  const { warnings } = loadConfig({ projects: { "/bad": { chain: "nope", deny: "xai", extra: 1 } } })
+  assert.equal(warnings.length, 3)
+
+  // The longest matching directory wins; a sibling with the same prefix does not match.
+  assert.equal(matchProject(config.projects, "/work/client-x/api")?.[0], "/work/client-x")
+  assert.equal(matchProject(config.projects, "/work/client-xyz")?.[0], "/work")
+  assert.equal(matchProject(config.projects, "/elsewhere"), undefined)
+  assert.equal(matchProject(config.projects, undefined), undefined)
+
+  // A file that comes with the project may shut providers out, but not choose a chain.
+  const file = parseRules({ deny: ["github-copilot"], chain: "opus", denyKinds: ["metered", "free"] }, ".opencode/quota-router.json", false, ["opus"])
+  assert.equal(file.rules?.chain, undefined)
+  assert.deepEqual(file.rules?.denyKinds, ["metered"])
+  assert.equal(file.warnings.length, 2)
+  assert.equal(parseRules([], "x", false).rules, undefined)
+
+  // Together: everything either shuts out stays out, and an allow list narrows, never widens.
+  const both = combineRules([config.projects["/work/client-x"], file.rules])!
+  assert.deepEqual(both.deny, ["xai", "github-copilot"])
+  assert.deepEqual(both.denyKinds, ["local", "metered"])
+  assert.equal(both.chain, "sonnet")
+  assert.deepEqual(combineRules([{ deny: [], allow: ["a", "b"], denyKinds: [], source: "1" }, { deny: [], allow: ["b", "c"], denyKinds: [], source: "2" }])?.allow, ["b"])
+  assert.equal(combineRules([undefined, undefined]), undefined)
+
+  assert.match(ruledOut(config, both, "xai") ?? "", /xai is not allowed in this project/)
+  assert.match(ruledOut(config, both, "anthropic") ?? "", /metered providers are not allowed/)
+  assert.equal(ruledOut(config, both, "claude-agent"), undefined)
+  assert.match(ruledOut(config, config.projects["/work"], "openai") ?? "", /only claude-agent, anthropic, xai is allowed/)
+  assert.equal(rulesGate(config, { deny: [], denyKinds: [], source: "x" }), undefined)
+
+  // Routing never goes to a provider the rules shut out, even when it is the only one left.
+  const pools = new PoolStore(config, () => NOW)
+  const preferred = { ...findInChains(config, { providerID: "claude-agent", id: "opus" })!, variant: "medium" }
+  pools.report({ kind: "window", pools: ["claude-agent"], evidence: "limit", resetAt: NOW + 3_600_000 })
+  assert.equal(route({ config, pools, models: MODELS, preferred, mode: "turn" }).target?.providerID, "xai")
+  const r = route({ config, pools, models: MODELS, preferred, mode: "turn", gate: rulesGate(config, both) })
+  assert.equal(r.target, undefined)
+  assert.ok(r.skipped.some((line) => /xai\/grok-4.7: xai is not allowed in this project/.test(line)))
 })

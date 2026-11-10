@@ -1,4 +1,5 @@
 // quota-router: quota-aware provider routing for OpenCode V2, with a local usage dashboard.
+import { ruledOut } from "./engine/rules.ts"
 import { adviceText, planAdvice } from "./advisor.ts"
 import { parseUntil } from "./engine/policy.ts"
 import { backfill } from "./backfill.ts"
@@ -105,9 +106,16 @@ function statusText(core: Core, sessionID: string): string {
   const lines = [`quota-router ${VERSION}${core.paused ? " (paused)" : ""}${core.config.dryRun ? " (dry run)" : ""}`]
   if (core.dashboardURL) lines.push(`Dashboard: ${core.dashboardURL}`)
   if (s?.preferred) {
-    lines.push(`This session: ${s.current ? refLabel(s.current) : "?"} (preferred ${refLabel(s.preferred.model)}, chain ${s.preferred.chain}${s.byAgent ? ` from the ${s.agent} agent` : ""}${s.pinned ? ", pinned" : ""})`)
+    lines.push(`This session: ${s.current ? refLabel(s.current) : "?"} (preferred ${refLabel(s.preferred.model)}, chain ${s.preferred.chain}${s.byAgent ? (s.byProject ? " from this project's settings" : ` from the ${s.agent} agent`) : ""}${s.pinned ? ", pinned" : ""})`)
     lines.push(`Chain: ${orderedChain(core.config, s.preferred.chain).map(refLabel).join(" → ")}`)
   } else lines.push("This session's model is in no chain, so it is not routed.")
+  const rules = s ? core.rulesFor(s) : undefined
+  if (rules) {
+    const parts = [rules.deny.length ? `no ${rules.deny.join(", ")}` : "", rules.denyKinds.length ? `no ${rules.denyKinds.join(" or ")} providers` : "", rules.allow ? `only ${rules.allow.join(", ") || "nothing"}` : "", rules.chain ? `chain ${rules.chain}` : ""].filter(Boolean)
+    if (parts.length) lines.push(`Project rules: ${parts.join("; ")} (from ${rules.source})`)
+    const out = s?.current ? ruledOut(core.config, rules, s.current.providerID) : undefined
+    if (out) lines.push(`This session is on a provider the rules shut out: ${out}.${s?.pinned ? " It is pinned; /router unpin lets routing move it." : ""}`)
+  }
   for (const [id, until] of Object.entries(core.saved())) lines.push(`- ${id}: saved for later until ${new Date(until).toLocaleString()}`)
   for (const p of core.pools.all()) {
     const when = p.until ? ` until ${new Date(p.until).toLocaleString()}` : ""

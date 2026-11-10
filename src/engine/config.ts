@@ -1,3 +1,4 @@
+import { parseRules, type Rules } from "./rules.ts"
 import type { ModelRef, ProviderKind } from "./types.ts"
 
 export type ProviderConfig = {
@@ -32,6 +33,8 @@ export type Config = {
   chains: Record<string, ModelRef[]>
   /** The chain an agent's sessions use, by agent name. Without an entry, the session's model decides the chain. */
   agents: Record<string, string>
+  /** Rules per project directory: providers shut out, and the chain its sessions use. */
+  projects: Record<string, Rules>
   recovery: { skewMs: number }
   throttle: { maxWaitMs: number; inPlaceRetries: number; cooldownMs: number; maxCooldownMs: number }
   /**
@@ -198,6 +201,7 @@ export const DEFAULTS: Config = {
   },
   chains: Object.fromEntries(Object.entries(DEFAULT_CHAINS).map(([k, v]) => [k, v.map(parseRef)])),
   agents: {},
+  projects: {},
   recovery: { skewMs: 60_000 },
   throttle: { maxWaitMs: 20_000, inPlaceRetries: 2, cooldownMs: 60_000, maxCooldownMs: 10 * 60_000 },
   switching: { minStayMs: 3 * 60_000, largeContextTokens: 100_000, largeContextMaxWaitMs: 60_000 },
@@ -312,6 +316,8 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
   const rawChains = opts.chains
   const rawProviders = opts.providers
   const rawAgents = opts.agents
+  const rawProjects = opts.projects
+  delete opts.projects
   delete opts.chains
   delete opts.agents
   delete opts.providers
@@ -433,5 +439,15 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
       else config.agents[agent] = chain
     }
   } else if (rawAgents !== undefined) warnings.push("agents should be an object of agent: chain; ignored")
+
+  config.projects = {}
+  if (isObject(rawProjects)) {
+    for (const [dir, raw] of Object.entries(rawProjects)) {
+      if (UNSAFE_KEYS.has(dir) || raw === null) continue
+      const parsed = parseRules(raw, `projects.${dir}`, true, Object.keys(config.chains))
+      warnings.push(...parsed.warnings)
+      if (parsed.rules) config.projects[dir] = { ...parsed.rules, source: "your settings" }
+    }
+  } else if (rawProjects !== undefined) warnings.push("projects should be an object of directory: rules; ignored")
   return { config, warnings }
 }

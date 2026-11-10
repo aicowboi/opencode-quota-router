@@ -1,5 +1,6 @@
 // A health check of the whole setup: what is connected, what would be used, and what is likely to go wrong.
 // Read-only. Nothing here reads a credential, and paths are shown relative to the home directory.
+import { ruledOut } from "./engine/rules.ts"
 import { unreliable } from "./engine/health.ts"
 import { LOCAL_NAMES, localNote } from "./probes/local.ts"
 import { claudePlan } from "./engine/plans.ts"
@@ -86,6 +87,20 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   probe("probe-claude", "Claude", config.claude.usageProbe, core.hasProvider("claude-agent"), core.claude, "claude.usageProbe")
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
   probe("probe-openrouter", "OpenRouter", config.openrouter.usageProbe, core.hasProvider("openrouter"), core.openrouter, "openrouter.usageProbe")
+  // Project rules, for the projects with a session open
+  const seenDirs = new Set<string>()
+  for (const s of core.sessions.values()) {
+    const dir = core.directoryOf(s)
+    if (!dir) continue
+    const rules = core.rulesFor(s)
+    if (!seenDirs.has(dir)) {
+      seenDirs.add(dir)
+      for (const [i, w] of core.projectFile(dir).warnings.entries()) add({ id: `rules-file-${seenDirs.size}-${i}`, status: "warn", title: "Problem in a project's rules", detail: w })
+      if (rules) add({ id: `rules-${seenDirs.size}`, status: "info", title: `Project rules apply in ${path.basename(dir)}`, detail: [rules.deny.length ? `Never routed to: ${rules.deny.join(", ")}` : "", rules.denyKinds.length ? `No ${rules.denyKinds.join(" or ")} providers` : "", rules.allow ? `Only: ${rules.allow.join(", ") || "nothing"}` : "", rules.chain ? `Chain: ${rules.chain}` : "", `From ${rules.source}`].filter(Boolean).join(" · ") })
+    }
+    const out = rules && s.current ? ruledOut(config, rules, s.current.providerID) : undefined
+    if (out && core.recorder.live.has(s.id)) add({ id: `rules-session-${s.id}`, status: "warn", title: "A session is on a provider its project shuts out", detail: `${out}.`, fix: s.pinned ? "The session is pinned; /router unpin lets routing move it." : "Pick a model that is in a chain, so routing can move it." })
+  }
   for (const [id, h] of Object.entries(core.health(now)))
     if (config.health.enabled && unreliable(config, h)) add({ id: `health-${id}`, status: "warn", title: `${id} is unreliable right now`, detail: `${h.failed} of its last ${h.requests} requests failed without a limit being the cause. Routing passes it over while another entry can run, and comes back as the failures age out.` })
   for (const [kind, l] of core.local) {

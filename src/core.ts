@@ -1,5 +1,6 @@
 // Process-wide state shared by every plugin instance: pools, sessions, store, usage probes, dashboard.
 import path from "node:path"
+import fs from "node:fs"
 import os from "node:os"
 import { feed, raise, type AlertInput } from "./alerts.ts"
 import { checkSetting, loadConfig, overlay, refKey, refLabel, type Config } from "./engine/config.ts"
@@ -13,6 +14,7 @@ import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsa
 import { fetchCopilotUser, findGithubToken, interpretCopilot, type CopilotQuota } from "./probes/copilot.ts"
 import { fetchLocal, LOCAL_NAMES, type LocalHealth, type LocalKind } from "./probes/local.ts"
 import { healthGate, speedOf, summariseHealth, type ProviderHealth } from "./engine/health.ts"
+import { combineRules, matchProject, parseRules, rulesGate, type Rules } from "./engine/rules.ts"
 import { learnPool, type LearnedPool, type PoolSpend } from "./engine/learn.ts"
 import { fetchOpenRouterKey, findOpenRouterKey, interpretOpenRouter, type OpenRouterCredit } from "./probes/openrouter.ts"
 import { markDirty, optimize, prune, refreshSessions, rollupDirty } from "./maintenance.ts"
@@ -43,6 +45,10 @@ export type SessionState = {
   parentID?: string
   /** When routing last moved the session. */
   movedAt?: number
+  /** Where the session works, for project rules. */
+  directory?: string
+  /** `preferred` comes from the chain set for the session's project. */
+  byProject?: boolean
   /** The agent the session runs as, when known. */
   agent?: string
   /** The user chose a model in this session, which outranks the chain configured for its agent. */
@@ -230,6 +236,7 @@ export class Core {
     () => saveGate(this.saved(), Date.now()),
     () => downGate(this.localDown()),
     () => healthGate(this.config, this.health()),
+    (s) => (s ? rulesGate(this.config, this.rulesFor(s)) : undefined),
     () => economyGate(this.config, this.copilot.data && this.copilot.data.entitlement > 0 ? (this.copilot.data.used / this.copilot.data.entitlement) * 100 : undefined, this.models),
     (s) => (this.config.pace.enabled && s && this.isLight(s) ? paceGate(this.config, this.forecasts(), true, Date.now()) : undefined),
   ]
@@ -237,6 +244,60 @@ export class Core {
   /** Light work for the pace guard: a subagent's session, or a session run by one of the agents listed. */
   isLight(s: SessionState) {
     return Boolean(s.parentID) || (s.agent !== undefined && this.config.pace.lightAgents.includes(s.agent))
+  }
+
+  private ruleFiles = new Map<string, { at: number; rules?: Rules; warnings: string[] }>()
+
+  directoryOf(s: SessionState): string | undefined {
+    if (s.directory === undefined) s.directory = this.store.get<{ directory: string | null }>("SELECT directory FROM sessions WHERE id = ?", s.id)?.directory ?? undefined
+    return s.directory
+  }
+
+  /**
+   * Rules in `.opencode/quota-router.json`, in the directory or the nearest parent that has one. The file comes with
+   * the project, so it is not trusted: it can shut providers out and nothing else. Looked at again every 15 seconds.
+   */
+  projectFile(directory: string, now = Date.now()): { rules?: Rules; warnings: string[] } {
+    const cached = this.ruleFiles.get(directory)
+    if (cached && now - cached.at < 15_000 && now >= cached.at) return cached
+    const out: { at: number; rules?: Rules; warnings: string[] } = { at: now, warnings: [] }
+    const home = os.homedir()
+    let dir = path.resolve(directory)
+    for (let depth = 0; depth < 24; depth++) {
+      const file = path.join(dir, ".opencode", "quota-router.json")
+      try {
+        const stat = fs.statSync(file)
+        if (stat.isFile()) {
+          if (stat.size > 32_768) out.warnings.push(`${file}: too large; ignored`)
+          else {
+            const parsed = parseRules(JSON.parse(fs.readFileSync(file, "utf8")), ".opencode/quota-router.json", false)
+            out.rules = parsed.rules
+            out.warnings = parsed.warnings
+          }
+          break
+        }
+      } catch (error) {
+        if ((error as { code?: string }).code !== "ENOENT" && (error as { code?: string }).code !== "ENOTDIR") {
+          out.warnings.push(`${file}: ${error instanceof SyntaxError ? "not valid JSON" : String((error as Error).message ?? error)}; ignored`)
+          break
+        }
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir || dir === home) break
+      dir = parent
+    }
+    if (this.ruleFiles.size > 200) this.ruleFiles.clear()
+    this.ruleFiles.set(directory, out)
+    return out
+  }
+
+  /** The rules for a session's project: yours from `projects`, and the project's own file, which can only add limits. */
+  rulesFor(s: SessionState): Rules | undefined {
+    const directory = this.directoryOf(s)
+    if (!directory) return undefined
+    const home = os.homedir()
+    const mine = matchProject(Object.fromEntries(Object.entries(this.config.projects).map(([p, r]) => [p === "~" || p.startsWith("~/") ? home + p.slice(1) : p, r])), directory)?.[1]
+    return combineRules([mine, this.projectFile(directory).rules])
   }
 
   private healthCache?: { at: number; health: Record<string, ProviderHealth> }
@@ -577,15 +638,21 @@ export class Core {
    * because they run on their parent's model.
    */
   prefer(s: SessionState): boolean {
-    const chain = s.agent && !s.picked && !s.parentID && Object.hasOwn(this.config.agents, s.agent) ? this.config.agents[s.agent] : undefined
+    const free = !s.picked && !s.parentID
+    const agentChain = free && s.agent && Object.hasOwn(this.config.agents, s.agent) ? this.config.agents[s.agent] : undefined
+    // An agent's chain is the more specific choice, so it outranks the project's.
+    const projectChain = free && !agentChain ? this.rulesFor(s)?.chain : undefined
+    const chain = agentChain ?? projectChain
     const first = chain ? orderedChain(this.config, chain)[0] : undefined
     if (chain && first) {
       s.preferred = { chain, index: 0, variant: first.variant, model: first }
       s.byAgent = true
+      s.byProject = !agentChain
       return true
     }
     if (s.byAgent) {
       s.byAgent = false
+      s.byProject = false
       s.preferred = s.current ? this.preferredFor(s.current) : undefined
     }
     return false

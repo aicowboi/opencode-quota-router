@@ -744,6 +744,59 @@ test("agent chains: an agent's sessions use its chain until the user picks a mod
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
 })
 
+test("project rules: a project's file shuts a provider out, and your settings give the project its chain", async () => {
+  const base = { claude: { usageProbe: false }, copilot: { usageProbe: false }, backfill: false, dashboard: { enabled: false } }
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), "qr-proj-"))
+  fs.mkdirSync(path.join(proj, ".opencode"))
+  fs.mkdirSync(path.join(proj, "api"))
+  // The file tries to choose a chain too; that part is ignored.
+  fs.writeFileSync(path.join(proj, ".opencode", "quota-router.json"), JSON.stringify({ deny: ["xai"], chain: "opus" }))
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  assert.deepEqual(core.setSetting("chains.quick", ["xai/grok-4.7#low", "openai/gpt-6.1-sol#low"]), { ok: true })
+  core.setOptions({ ...base, projects: { [proj]: { chain: "quick" } } })
+  assert.deepEqual(core.warnings, [])
+
+  // A session in a folder of the project starts on the project's chain, minus the provider the file shuts out.
+  const sid = "ses_rules"
+  harness.sessionModels.set(sid, opus)
+  await onEvent(core, evt("session.created", { sessionID: sid, model: opus, location: { directory: path.join(proj, "api") } }))
+  await flush()
+  const s = core.session(sid)
+  assert.equal(s.preferred.chain, "quick")
+  assert.equal(s.byProject, true)
+  assert.deepEqual(harness.calls.switches.at(-1), { sessionID: sid, model: { providerID: "openai", id: "gpt-6.1-sol", variant: "low" } })
+  const rules = core.rulesFor(s)
+  assert.deepEqual(rules.deny, ["xai"])
+  assert.equal(rules.chain, "quick")
+  assert.equal(core.projectFile(path.join(proj, "api")).warnings.length, 1, "the file's chain is refused, with a warning")
+  const row: any = core.store.get("SELECT evidence FROM routing WHERE session_id = ? ORDER BY rowid DESC LIMIT 1", sid)
+  assert.match(row.evidence, /xai is not allowed in this project \(\.opencode\/quota-router\.json\)/)
+
+  // A session elsewhere is untouched.
+  const other = "ses_rules_other"
+  const before = harness.calls.switches.length
+  harness.sessionModels.set(other, opus)
+  await onEvent(core, evt("session.created", { sessionID: other, model: opus, location: { directory: os.tmpdir() } }))
+  await flush()
+  assert.equal(core.rulesFor(core.session(other)), undefined)
+  assert.equal(core.session(other).preferred.chain, "opus")
+  assert.equal(harness.calls.switches.length, before)
+
+  // A file that is not valid JSON shuts nothing out and says so.
+  fs.writeFileSync(path.join(proj, ".opencode", "quota-router.json"), "{ not json")
+  core.ruleFiles.clear()
+  assert.equal(core.projectFile(proj).rules, undefined)
+  assert.match(core.projectFile(proj).warnings[0], /not valid JSON/)
+
+  core.setOptions(base)
+  assert.deepEqual(core.setSetting("chains.quick", undefined), { ok: true })
+  core.ruleFiles.clear()
+  for (const id of [sid, other]) core.sessions.delete(id)
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  fs.rmSync(proj, { recursive: true, force: true })
+})
+
 test("pace guard: a subagent leaves a plan that is on pace to run out, and the main session stays", async () => {
   const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
   const now = Date.now()

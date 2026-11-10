@@ -109,7 +109,9 @@ export async function onPrompt(core: Core, e: { sessionID: string; metadata?: Re
       : r.skipped.length
         ? r.skipped.join("; ")
         : s.byAgent && trigger === "route"
-          ? `The ${s.agent} agent uses the ${s.preferred.chain} chain`
+          ? s.byProject
+            ? `This project uses the ${s.preferred.chain} chain`
+            : `The ${s.agent} agent uses the ${s.preferred.chain} chain`
           : undefined
   if (core.config.dryRun) {
     const key = `${trigger} ${refLabel(r.target)}`
@@ -131,8 +133,10 @@ export async function onEvent(core: Core, ev: { id: string; type: string; create
         s.current = d.model
         s.preferred ??= core.preferredFor(d.model)
       }
+      if (typeof d.location?.directory === "string") s.directory = d.location.directory
       core.setAgent(s, d.agent)
-      // An agent with its own chain starts on that chain, not on the model the session was created with.
+      core.prefer(s)
+      // An agent or a project with its own chain starts on that chain, not on the model the session was created with.
       if (s.byAgent) void onPrompt(core, { sessionID: s.id })
       return
     }
