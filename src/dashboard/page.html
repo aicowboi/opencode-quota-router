@@ -507,9 +507,12 @@ function renderLadder() {
     } else if (p.id === "xai") {
       const lx = (s.learned || {}).xai
       if (lx) {
-        cap = gauge("Week", lx.pct, "about " + Math.round(lx.pct) + "%", col) + paceNotes("xai")
-        cap += '<div class="note">Estimated: xAI publishes no usage figures. From the ' + (lx.samples === 1 ? "one time" : fmtInt(lx.samples) + " times") + " it ran out, the weekly pool holds about " + fmtUSD(lx.capacityUsd) + " of usage at list prices; " + fmtUSD(lx.usedUsd) + " used " + (lx.exhausted ? "before it ran out" : "since " + esc(fmtWhen(lx.windowStart))) + ".</div>"
-      } else cap = '<div class="gauge"><span class="lab">Week</span><span class="track unknown"></span><span class="val muted">not reported</span></div><div class="note">xAI publishes no usage figures. Once the weekly pool has run out once, its size is estimated from your usage.</div>'
+        const spread = lx.pctLow != null && lx.pctHigh != null && Math.round(lx.pctHigh) > Math.round(lx.pctLow)
+        const val = "about " + Math.round(lx.pct) + "%" + (spread ? " (" + Math.round(lx.pctLow) + "–" + Math.round(lx.pctHigh) + "%)" : "")
+        cap = gauge("API week", lx.pct, val, col) + paceNotes("xai")
+        if (lx.basis === "reading") cap += '<div class="note">Estimated from usage recorded here, matched to the xAI console. The weekly API pool looks like ' + fmtUSD(lx.capacityLowUsd != null ? lx.capacityLowUsd : lx.capacityUsd) + "–" + fmtUSD(lx.capacityHighUsd != null ? lx.capacityHighUsd : lx.capacityUsd) + " at list prices; " + fmtUSD(lx.usedUsd) + " used since " + esc(fmtWhen(lx.windowStart)) + (lx.resetAt ? ", resets " + esc(fmtWhen(lx.resetAt)) : "") + ". Chat on the same seat is not counted. The range closes the first time the pool runs out.</div>"
+        else cap += '<div class="note">Estimated: xAI publishes no usage figures. From the ' + (lx.samples === 1 ? "one time" : fmtInt(lx.samples) + " times") + " it ran out, the weekly pool holds about " + fmtUSD(lx.capacityUsd) + " of usage at list prices; " + fmtUSD(lx.usedUsd) + " used " + (lx.exhausted ? "before it ran out" : "since " + esc(fmtWhen(lx.windowStart))) + ".</div>"
+      } else cap = '<div class="gauge"><span class="lab">API week</span><span class="track unknown"></span><span class="val muted">not reported</span></div><div class="note">xAI publishes no usage figures. A console reading of the API share, or the first time the weekly pool runs out, is enough to estimate it.</div>'
     } else if (p.id === "openai" && chatgpt()) {
       const w = s.chatgpt.data ? s.chatgpt.data.windows : []
       for (const x of w) cap += gauge(x.label === "weekly" ? "Week" : x.label, x.usedPct, Math.round(x.usedPct) + "%" + (x.resetAt ? " · " + esc(x.resetAt - Date.now() < 864e5 ? fmtTime(x.resetAt) : fmtWhen(x.resetAt)) : ""), col, s.chatgpt.cutoverAtPct)

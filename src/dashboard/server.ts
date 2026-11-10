@@ -63,6 +63,10 @@ export function buildMenubar(core: Core) {
     claude: core.claude.data ? { windows: core.claude.data.windows, extra: core.claude.data.extra, at: core.claude.at } : undefined,
     chatgpt: core.chatgptActive() && core.chatgpt.data ? { windows: core.chatgpt.data.windows, at: core.chatgpt.at } : undefined,
     copilot: core.copilot.data ? { ...core.copilot.data, at: core.copilot.at, estimate: core.copilotEstimate(now, core.copilot.data.entitlement) } : undefined,
+    xai: (() => {
+      const x = core.learned(now).xai
+      return x ? { pct: x.pct, pctLow: x.pctLow, pctHigh: x.pctHigh, resetAt: x.resetAt, basis: x.basis, exhausted: x.exhausted } : undefined
+    })(),
     providers,
     live: live.map((e) => {
       const s = core.sessions.get(e.sessionID)

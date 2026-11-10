@@ -137,7 +137,11 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
     }
   }
   const xai = core.learned(now).xai
-  if (xai) add({ id: "learned-xai", status: "info", title: `xAI weekly pool: about ${Math.round(xai.pct)}% used (estimated)`, detail: `xAI publishes no usage figures. From the ${xai.samples === 1 ? "one time" : `${xai.samples} times`} it ran out, the pool holds about $${xai.capacityUsd.toFixed(2)} of usage at list prices a week. Routing does not act on this estimate, except through the pace guard.` })
+  if (xai?.basis === "reading") {
+    const low = Math.round(xai.pctLow ?? xai.pct)
+    const high = Math.round(xai.pctHigh ?? xai.pct)
+    add({ id: "learned-xai", status: "info", title: `xAI weekly pool: about ${Math.round(xai.pct)}% used (${low}–${high}%, estimated)`, detail: `xAI publishes no usage figures. Calibrated from ${xai.samples === 1 ? "a console reading" : `${xai.samples} console readings`} of the API share, matched to usage recorded here at list prices. The pool looks like $${(xai.capacityLowUsd ?? xai.capacityUsd).toFixed(0)}–$${(xai.capacityHighUsd ?? xai.capacityUsd).toFixed(0)} a week. Chat on the same seat is not counted, and the range closes the first time the pool runs out. Routing does not act on this estimate, except through the pace guard.` })
+  } else if (xai) add({ id: "learned-xai", status: "info", title: `xAI weekly pool: about ${Math.round(xai.pct)}% used (estimated)`, detail: `xAI publishes no usage figures. From the ${xai.samples === 1 ? "one time" : `${xai.samples} times`} it ran out, the pool holds about $${xai.capacityUsd.toFixed(2)} of usage at list prices a week. Routing does not act on this estimate, except through the pace guard.` })
   if (core.chatgptActive()) add(core.chatgpt.at ? { id: "probe-chatgpt", status: "ok", title: "ChatGPT plan windows are being read", detail: `Last seen ${minutes(now - core.chatgpt.at)} ago` } : { id: "probe-chatgpt", status: "info", title: "ChatGPT plan windows appear after the first request" })
 
   // Plans

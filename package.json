@@ -16,8 +16,6 @@
     "src",
     "gui",
     "dist",
-    "docs/*.md",
-    "integrations",
     "README.md",
     "LICENSE",
     "SECURITY.md",

@@ -36,7 +36,7 @@ flowchart LR
 | `router.ts` | Given the chain for the session's model, provider priorities, pool health, a gate and the conversation size, it returns the best model now, or the earliest moment one frees up. Effort carries across as an offset: Opus at `high`, one step above its baseline, becomes Grok at `xhigh`. |
 | `policy.ts` | Reasons to pass over an entry that have nothing to do with pool health. Each policy is a pure function that returns a block, with a reason and an end time; `soft` blocks rank an entry below every usable one instead of skipping it. |
 | `rules.ts`, `schedule.ts` | Project rules (which providers and chain a project's sessions use) and schedules (rules that apply at certain times, in local time). |
-| `health.ts`, `forecast.ts`, `learn.ts` | Latency and error rate per provider; when a plan window will run out at its current pace; the size of a pool that publishes no figures (xAI), learned from the times it ran out. |
+| `health.ts`, `forecast.ts`, `learn.ts` | Latency and error rate per provider; when a plan window will run out at its current pace; the size of a pool that publishes no figures (xAI), learned from the times it ran out, or estimated from a console reading until then. |
 | `plans.ts`, `pricing.ts` | Subscription plans and advice on whether each fits; value at API list price and actual spend. |
 | `discovery.ts` | Finds every connected provider, labels it subscription, pay-per-use or local from how it was connected, ranks the unconfigured ones, and suggests chain entries by model family or price level, including newer models of the same line. |
 | `config.ts` | Defaults, parsing and checks for every option, and the overlay of stored settings on top of `opencode.jsonc`. |

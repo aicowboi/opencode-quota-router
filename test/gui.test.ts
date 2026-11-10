@@ -38,6 +38,14 @@ test("menu bar: normal state shows Claude's 5-hour window", () => {
   assert.ok(labels.includes("Pause Routing"))
 })
 
+test("menu bar: an estimated xAI week is listed, and does not lengthen the title", () => {
+  const v = present({ ...base, xai: { pct: 31, pctLow: 30, pctHigh: 32, resetAt: NOW + 34 * 3_600_000, basis: "reading" } })
+  assert.equal(v.title, "53%")
+  const item = v.sections.flat().find((i) => i.label.startsWith("xAI weekly"))
+  assert.equal(item?.label, "xAI weekly — about 31% (30–32%)")
+  assert.match(item?.sublabel ?? "", /Estimated from usage recorded here/)
+})
+
 test("menu bar: limited Claude shows where requests go and when it returns", () => {
   const v = present({
     ...base,

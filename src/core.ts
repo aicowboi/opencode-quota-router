@@ -17,7 +17,7 @@ import { fetchLocal, LOCAL_NAMES, type LocalHealth, type LocalKind } from "./pro
 import { healthGate, speedOf, summariseHealth, type ProviderHealth } from "./engine/health.ts"
 import { activeSchedules, scheduleFirst, scheduleGate, type ActiveSchedule } from "./engine/schedule.ts"
 import { combineRules, matchProject, parseRules, rulesGate, type Rules } from "./engine/rules.ts"
-import { learnPool, type LearnedPool, type PoolSpend } from "./engine/learn.ts"
+import { estimatePool, type LearnedPool, type PoolSpend, type UsageReading } from "./engine/learn.ts"
 import { fetchOpenRouterKey, findOpenRouterKey, interpretOpenRouter, type OpenRouterCredit } from "./probes/openrouter.ts"
 import { markDirty, optimize, prune, refreshSessions, rollupDirty } from "./maintenance.ts"
 import { applyDiscovery, chainUpdates, suggest, withAdditions, withReplacements, type ConnectionMethod } from "./engine/discovery.ts"
@@ -207,6 +207,7 @@ export class Core {
   resetProvider(providerID: string, reason: string) {
     for (const p of this.pools.all()) if (p.id === providerID || p.id.startsWith(`${providerID}:`)) this.pools.reset(p.id, reason)
     if (providerID === "openai") this.chatgpt = { ok: false }
+    this.clearUsageAnchor(providerID)
   }
 
   metaJSON<T>(key: string, fallback: T): T {
@@ -371,26 +372,48 @@ export class Core {
   private forecastCache?: { at: number; list: WindowForecast[] }
   private learnedCache?: { at: number; spend: PoolSpend[]; pool?: LearnedPool }
 
+  /** A console calibration for a provider that publishes no usage figures. Personal, kept in the local database. */
+  private usageAnchor(provider: string): { resetAt?: number; readings: UsageReading[] } | undefined {
+    const all = this.metaJSON<Record<string, { resetAt?: number; readings?: UsageReading[] }>>("usage_anchors", {})
+    const a = all?.[provider]
+    if (!a) return undefined
+    const readings = (Array.isArray(a.readings) ? a.readings : []).filter((r) => r && typeof r.at === "number" && typeof r.pct === "number" && typeof r.usd === "number")
+    if (!readings.length) return undefined
+    return { resetAt: typeof a.resetAt === "number" ? a.resetAt : undefined, readings }
+  }
+
+  /** A new login: the old seat's console reading does not describe it. */
+  private clearUsageAnchor(provider: string) {
+    const all = this.metaJSON<Record<string, unknown>>("usage_anchors", {})
+    if (!all || !Object.hasOwn(all, provider)) return
+    delete all[provider]
+    this.store.setMeta("usage_anchors", JSON.stringify(all))
+    this.learnedCache = undefined
+  }
+
   /**
-   * xAI publishes no usage figures, so the size of its weekly pool is learned: each time it has run out, the usage
-   * in the week before, at list prices, is a reading of what it holds. An estimate, and shown as one.
+   * xAI publishes no usage figures. Until the weekly pool has run out, a console reading of the API share, matched to
+   * the usage recorded here, is enough to estimate it. The first time it runs out, that replaces the calibration.
+   * Chat on the same seat is not in the reading. An estimate, and shown as one.
    */
   learned(now = Date.now()): { xai?: LearnedPool } {
     if (!this.hasProvider("xai") || this.config.providers.xai?.kind !== "subscription") return {}
     const WEEK = 7 * 86_400_000
     const c = this.learnedCache
-    if (c && now - c.at < 5 * 60_000 && now >= c.at) return c.pool ? { xai: c.pool } : {}
+    const ttl = c?.pool?.basis === "reading" ? 15_000 : 5 * 60_000
+    if (c && now - c.at < ttl && now >= c.at) return c.pool ? { xai: c.pool } : {}
+    const anchor = this.usageAnchor("xai")
     const exhausted = this.store
       .all<{ at: number; until: number | null }>("SELECT at, until FROM pool_log WHERE pool = 'xai' AND status IN ('cooling', 'blocked') AND kind IN ('window', 'billing') AND at >= ? ORDER BY at", now - 26 * WEEK)
       .map((r) => ({ at: r.at, until: r.until ?? undefined }))
-    const first = exhausted[0]
-    const spend = first
+    const from = [exhausted[0] ? exhausted[0].at - WEEK : undefined, anchor?.resetAt ? anchor.resetAt - WEEK : undefined, anchor ? Math.min(...anchor.readings.map((r) => r.at)) - WEEK : undefined].filter((n): n is number => n !== undefined)
+    const spend = from.length
       ? this.store.all<PoolSpend>(
           "SELECT (COALESCE(ended_at, started_at) / 3600000) * 3600000 AS at, SUM(cost_equiv) AS usd FROM steps WHERE provider_id = 'xai' AND COALESCE(ended_at, started_at) >= ? GROUP BY 1 ORDER BY 1",
-          first.at - WEEK,
+          Math.min(...from),
         )
       : []
-    const pool = learnPool({ exhausted, spend, windowMs: WEEK, now })
+    const pool = estimatePool({ exhausted, spend, windowMs: WEEK, now, readings: anchor?.readings, resetAt: anchor?.resetAt })
     this.learnedCache = { at: now, spend, pool }
     return pool ? { xai: pool } : {}
   }

@@ -13,7 +13,7 @@ import { aliasTarget, costOf, estimate } from "../src/engine/pricing.ts"
 import { healthGate, speedOf, summariseHealth, unreliable } from "../src/engine/health.ts"
 import { combineRules, matchProject, parseRules, ruledOut, rulesGate } from "../src/engine/rules.ts"
 import { activeSchedules, describeSchedule, describeWhen, parseClock, parseSchedules, scheduleFirst, scheduleGate } from "../src/engine/schedule.ts"
-import { learnPool } from "../src/engine/learn.ts"
+import { estimatePool, learnPool } from "../src/engine/learn.ts"
 import type { ModelInfo } from "../src/engine/types.ts"
 
 // Monday 2026-11-09 11:00 local
@@ -562,6 +562,95 @@ test("learned pool: the size of a pool from the times it ran out", () => {
   assert.equal(out?.exhausted, true)
   assert.equal(out?.pct, 100)
   assert.equal(out?.resetAt, now + 6 * HOUR)
+})
+
+test("calibrated pool: a console reading estimates the week, and running out replaces it", () => {
+  const WEEK = 7 * 86_400_000
+  const now = Date.parse("2026-11-10T14:00:00Z")
+  const resetAt = Date.parse("2026-11-11T23:59:00Z")
+  const spend = [{ at: Date.parse("2026-11-10T13:00:00Z"), usd: 40 }]
+  assert.equal(estimatePool({ exhausted: [], spend, windowMs: WEEK, now }), undefined)
+
+  const one = estimatePool({ exhausted: [], spend, windowMs: WEEK, now, resetAt, readings: [{ at: Date.parse("2026-11-10T13:40:00Z"), pct: 10, usd: 14 }] })
+  assert.ok(one)
+  assert.equal(one.basis, "reading")
+  assert.equal(one.capacityUsd, 140)
+  assert.ok(Math.abs(one.pct - (40 / 140) * 100) < 1e-9)
+  assert.ok(one.pctLow! < one.pct && one.pctHigh! > one.pct, "whole-number rounding keeps a range")
+  assert.equal(one.resetAt, resetAt)
+  assert.equal(one.exhausted, false)
+
+  // Two readings that do not agree: the point is the middle, and the range covers both, plus rounding.
+  const two = estimatePool({
+    exhausted: [],
+    spend,
+    windowMs: WEEK,
+    now,
+    resetAt,
+    readings: [
+      { at: Date.parse("2026-11-10T13:40:00Z"), pct: 10, usd: 14 },
+      { at: Date.parse("2026-11-10T13:51:00Z"), pct: 14, usd: 28 },
+    ],
+  })
+  assert.ok(two)
+  assert.equal(two.capacityUsd, 170)
+  assert.ok(two.capacityLowUsd! < 140)
+  assert.ok(two.capacityHighUsd! > 200)
+  assert.ok(two.pctHigh! > two.pct && two.pct > two.pctLow!)
+
+  // A reading in between two that agree, but far from that rate, was a console that had not caught up. It is dropped,
+  // and the range is where the other two overlap.
+  const lagged = estimatePool({
+    exhausted: [],
+    spend: [{ at: Date.parse("2026-11-10T14:00:00Z"), usd: 43.6 }],
+    windowMs: WEEK,
+    now,
+    resetAt,
+    readings: [
+      { at: Date.parse("2026-11-10T13:40:00Z"), pct: 10, usd: 14.09 },
+      { at: Date.parse("2026-11-10T13:51:00Z"), pct: 14, usd: 28.92 },
+      { at: Date.parse("2026-11-10T14:03:00Z"), pct: 31, usd: 43.61 },
+    ],
+  })
+  assert.ok(lagged)
+  assert.equal(lagged.samples, 2)
+  assert.ok(Math.abs(lagged.capacityUsd - 140.8) < 0.2)
+  assert.ok(lagged.capacityLowUsd! > 138 && lagged.capacityHighUsd! < 144, "the overlapping range, not the lagged reading")
+  assert.ok(Math.abs(lagged.pct - (43.6 / lagged.capacityUsd) * 100) < 1e-6)
+
+  // After the reset, only the new window's usage counts. The size carries over.
+  const later = resetAt + 2 * 86_400_000
+  const rolled = estimatePool({
+    exhausted: [],
+    spend: [
+      { at: resetAt - 86_400_000, usd: 40 },
+      { at: resetAt + 86_400_000, usd: 7 },
+    ],
+    windowMs: WEEK,
+    now: later,
+    resetAt,
+    readings: [{ at: resetAt - 86_400_000, pct: 10, usd: 14 }],
+  })
+  assert.equal(rolled?.usedUsd, 7)
+  assert.equal(rolled?.resetAt, resetAt + WEEK)
+  assert.ok(Math.abs((rolled?.pct ?? 0) - (7 / 140) * 100) < 1e-9)
+
+  // Running out once is a fact, and it replaces the calibration.
+  const honed = estimatePool({
+    exhausted: [{ at: now - 3 * 86_400_000, until: now - 2 * 86_400_000 }],
+    spend: [
+      { at: now - 8 * 86_400_000, usd: 5 },
+      { at: now - 4 * 86_400_000, usd: 20 },
+      { at: now - 86_400_000, usd: 3 },
+    ],
+    windowMs: WEEK,
+    now,
+    resetAt,
+    readings: [{ at: now - 86_400_000, pct: 10, usd: 14 }],
+  })
+  assert.equal(honed?.basis, "exhausted")
+  assert.equal(honed?.capacityUsd, 25)
+  assert.equal(honed?.usedUsd, 3)
 })
 
 test("a local server that is not running is passed over", () => {

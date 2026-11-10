@@ -21,6 +21,8 @@ export type Menubar = {
     /** The live estimate from recorded tokens, present when it runs ahead of GitHub's own count. */
     estimate?: { used: number; basis: string; lagMs: number; lagAtLeast: boolean; reported: { used: number } }
   }
+  /** Weekly pool estimated from recorded usage, until xAI publishes figures of its own. */
+  xai?: { pct: number; pctLow?: number; pctHigh?: number; resetAt?: number; basis?: string; exhausted?: boolean }
   providers: Array<{ id: string; priority: number; kind: string; status: string; until?: number; evidence?: string; serving: number; saved?: number }>
   live: Array<{ title: string; project?: string; startedAt: number; model?: string; fallback?: string }>
   today: { tokens: number; equiv: number; actual: number; steps: number }
@@ -140,6 +142,17 @@ export function present(data: Menubar | undefined, cutoverAtPct = 98): View {
       sublabel: ahead
         ? `Estimated from tokens · GitHub reports ${Math.round(reported).toLocaleString()}, ${cp.estimate!.lagAtLeast ? "at least " : ""}${lag} behind`
         : `${Math.round(Math.max(0, cp.entitlement - used)).toLocaleString()} left · on pace for ${Math.round(pace).toLocaleString()} by ${new Date(end - 1).toLocaleDateString([], { day: "numeric", month: "short" })}`,
+      enabled: false,
+    })
+  }
+  const xai = data.xai
+  if (xai) {
+    const spread = xai.pctLow !== undefined && xai.pctHigh !== undefined && Math.round(xai.pctHigh) > Math.round(xai.pctLow) ? ` (${Math.round(xai.pctLow)}–${Math.round(xai.pctHigh)}%)` : ""
+    allowances.push({
+      label: xai.exhausted ? "xAI weekly — used up" : `xAI weekly — about ${Math.round(xai.pct)}%${spread}`,
+      sublabel: xai.exhausted
+        ? xai.resetAt ? `Back ${when(xai.resetAt, now)}` : "The weekly pool has run out"
+        : `${xai.basis === "exhausted" ? "Learned from the times it ran out" : "Estimated from usage recorded here"}${xai.resetAt ? ` · resets ${when(xai.resetAt, now)}` : ""}`,
       enabled: false,
     })
   }
