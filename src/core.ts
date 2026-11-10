@@ -1,9 +1,10 @@
 // Process-wide state shared by every plugin instance: pools, sessions, store, usage probes, dashboard.
 import path from "node:path"
-import { loadConfig, refKey, refLabel, type Config } from "./engine/config.ts"
+import { checkSetting, loadConfig, overlay, refKey, refLabel, type Config } from "./engine/config.ts"
 import { modelPools } from "./engine/classify.ts"
 import { Store } from "./db.ts"
 import { dataDir, Logger } from "./log.ts"
+import { composeGates, type Gate } from "./engine/policy.ts"
 import { PoolStore } from "./engine/pools.ts"
 import { estimate } from "./engine/pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
@@ -75,12 +76,12 @@ export class Core {
   shutdown?: () => Promise<void>
 
   private constructor(store: Store, log: Logger, options: unknown) {
-    const { config, warnings } = loadConfig(options)
+    this.store = store
     this.options = options
+    const { config, warnings } = loadConfig(overlay(options, this.storedSettings()))
     this.config = config
     this.warnings = warnings
     this.log = log
-    this.store = store
     this.pools = new PoolStore(config)
     this.pools.load(store.all<{ state: string }>("SELECT state FROM pools").map((r) => JSON.parse(r.state) as PoolState))
     this.pools.onChange(({ pool, previous, reason }) => {
@@ -116,9 +117,9 @@ export class Core {
     for (const w of this.warnings) this.log.warn("config", { warning: w })
   }
 
-  /** Options, then what the connections say, then the chain entries accepted on the dashboard. */
+  /** Options, then settings changed at runtime, then what the connections say, then the chain entries accepted on the dashboard. */
   rebuildConfig() {
-    const { config, warnings } = loadConfig(this.options)
+    const { config, warnings } = loadConfig(overlay(this.options, this.storedSettings()))
     const connected = new Map<string, ConnectionMethod | undefined>()
     for (const m of this.models.values()) if (!connected.has(m.providerID)) connected.set(m.providerID, this.connections.get(m.providerID))
     this.config = withAdditions(applyDiscovery(config, connected), this.chainAdditions())
@@ -176,6 +177,30 @@ export class Core {
     } catch {
       return fallback
     }
+  }
+
+  /** Settings changed from a command or the dashboard. They sit on top of `opencode.jsonc`, which is never written to. */
+  storedSettings(): Record<string, unknown> {
+    const stored = this.metaJSON<unknown>("settings", {})
+    return typeof stored === "object" && stored !== null && !Array.isArray(stored) ? (stored as Record<string, unknown>) : {}
+  }
+
+  /** Change one setting by its dotted path, for example `claude.cutoverAtPct`. `undefined` goes back to the configured value. */
+  setSetting(path: string, value: unknown): { ok: true } | { ok: false; error: string } {
+    const checked = checkSetting(this.options, this.storedSettings(), path, value)
+    if (!checked.ok) return checked
+    this.store.setMeta("settings", JSON.stringify(checked.stored))
+    this.log.info("setting", { path, cleared: value === undefined })
+    this.rebuildConfig()
+    this.log.setLevel(this.config.log.level)
+    return { ok: true }
+  }
+
+  /** Routing policies beyond pool health. Each feature adds its own; the router asks them in order. */
+  policies: Array<() => Gate | undefined> = []
+
+  gate(): Gate | undefined {
+    return composeGates(this.policies.map((p) => p()))
   }
 
   chainAdditions(): Record<string, string[]> {

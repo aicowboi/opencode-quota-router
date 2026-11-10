@@ -2,6 +2,7 @@
 import type { Config } from "./config.ts"
 import { refKey } from "./config.ts"
 import { modelPools } from "./classify.ts"
+import type { Gate } from "./policy.ts"
 import type { PoolStore } from "./pools.ts"
 import type { ModelInfo, ModelRef } from "./types.ts"
 
@@ -69,6 +70,8 @@ export function route(input: {
   mode: "turn" | "failover"
   /** Pools that just failed this request; never pick a model drawing from them. */
   exclude?: Set<string>
+  /** Policies that pass over an entry for reasons other than pool health (spend caps, schedules, project rules). */
+  gate?: Gate
 }): RouteResult {
   const { config, pools, models, preferred } = input
   const chain = orderedChain(config, preferred.chain)
@@ -103,6 +106,12 @@ export function route(input: {
     }
     const variant = mapVariant(entry, baseline, preferred.variant, info.variants)
     const target: ModelRef = { providerID: entry.providerID, id: entry.id, ...(variant ? { variant } : {}) }
+    const block = input.gate?.(entry)
+    if (block) {
+      skipped.push(`${label}: ${block.reason}`)
+      if (block.until && (!next || block.until < next.at)) next = { target, at: block.until }
+      continue
+    }
     const states = entryPools.map((p) => pools.usable(p))
     const usable = states.includes("no") ? "no" : states.includes("trial") ? "trial" : "yes"
     if (usable === "no") {

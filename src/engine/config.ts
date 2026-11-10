@@ -139,12 +139,58 @@ export const refKey = (ref: { providerID: string; id: string }) => `${ref.provid
 export const refLabel = (ref: ModelRef) => `${refKey(ref)}${ref.variant && ref.variant !== "default" ? `#${ref.variant}` : ""}`
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v)
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"])
+
+/** Settings that only take effect from `opencode.jsonc`: changing where the dashboard listens needs a restart and a deliberate edit. */
+export const LOCKED_SETTINGS = ["dashboard.host", "dashboard.port", "explicitProviders"]
+
+/** Lay one options object over another. Objects merge key by key; anything else in `patch` replaces the base value. */
+export function overlay(base: unknown, patch: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = isObject(base) ? { ...base } : {}
+  if (!isObject(patch)) return out
+  for (const [key, value] of Object.entries(patch)) {
+    if (UNSAFE_KEYS.has(key)) continue
+    out[key] = isObject(value) && isObject(out[key]) ? overlay(out[key], value) : value
+  }
+  return out
+}
+
+/** A copy of `settings` with the dotted `path` set to `value`, or removed when `value` is undefined. Empty parents are dropped. */
+export function withSetting(settings: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
+  const [head, ...rest] = path.split(".")
+  const out = { ...settings }
+  if (rest.length === 0) {
+    if (value === undefined) delete out[head]
+    else out[head] = value
+    return out
+  }
+  const child = withSetting(isObject(out[head]) ? out[head] : {}, rest.join("."), value)
+  if (Object.keys(child).length) out[head] = child
+  else delete out[head]
+  return out
+}
+
+/**
+ * Check a change to the stored settings before it is saved. A change is refused when it touches a locked setting, or
+ * when the resulting configuration would report a problem that was not there before.
+ */
+export function checkSetting(options: unknown, stored: Record<string, unknown>, path: string, value: unknown): { ok: true; stored: Record<string, unknown> } | { ok: false; error: string } {
+  const parts = path.split(".")
+  if (!path || parts.some((p) => !p || UNSAFE_KEYS.has(p))) return { ok: false, error: `"${path}" is not a setting` }
+  if (LOCKED_SETTINGS.some((l) => path === l || path.startsWith(`${l}.`) || l.startsWith(`${path}.`))) return { ok: false, error: `${path} can only be changed in opencode.jsonc` }
+  const bad = (v: unknown): boolean => (typeof v === "number" ? !Number.isFinite(v) || v < 0 : Array.isArray(v) ? v.some(bad) : isObject(v) ? Object.values(v).some(bad) : false)
+  if (bad(value)) return { ok: false, error: `${path} must be a number of zero or more` }
+  const next = withSetting(stored, path, value)
+  const before = new Set(loadConfig(overlay(options, stored)).warnings)
+  const problem = loadConfig(overlay(options, next)).warnings.find((w) => !before.has(w))
+  return problem ? { ok: false, error: problem } : { ok: true, stored: next }
+}
 
 function merge<T>(base: T, patch: unknown, path: string, warnings: string[]): T {
   if (!isObject(patch)) return base
   const out: Record<string, unknown> = { ...(base as Record<string, unknown>) }
   for (const [key, value] of Object.entries(patch)) {
-    const current = out[key]
+    const current = UNSAFE_KEYS.has(key) ? undefined : out[key]
     if (current === undefined) {
       warnings.push(`Unknown option ${path}${key} ignored`)
       continue

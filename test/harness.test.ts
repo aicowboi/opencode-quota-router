@@ -348,3 +348,17 @@ test("dashboard serves the page and state, and rejects foreign hosts", async () 
     await d.stop()
   }
 })
+
+test("settings changed at runtime are stored, applied over the options, and can be cleared", async () => {
+  assert.equal(core.config.claude.warnAtPct, 85)
+  assert.deepEqual(core.setSetting("claude.warnAtPct", 70), { ok: true })
+  assert.equal(core.config.claude.warnAtPct, 70)
+  assert.deepEqual(JSON.parse(core.store.meta("settings")), { claude: { warnAtPct: 70 } })
+  // Survives the options being re-applied, as happens when a second plugin instance starts.
+  core.setOptions({ claude: { usageProbe: false }, copilot: { usageProbe: false }, backfill: false, dashboard: { enabled: false } })
+  assert.equal(core.config.claude.warnAtPct, 70)
+  assert.equal(core.setSetting("dashboard.port", 1).ok, false)
+  assert.deepEqual(core.setSetting("claude.warnAtPct", undefined), { ok: true })
+  assert.equal(core.config.claude.warnAtPct, 85)
+  assert.equal(core.store.meta("settings"), "{}")
+})

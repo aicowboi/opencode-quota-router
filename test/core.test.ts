@@ -1,7 +1,8 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { classify, modelPools } from "../src/engine/classify.ts"
-import { loadConfig, parseRef } from "../src/engine/config.ts"
+import { checkSetting, loadConfig, overlay, parseRef, withSetting } from "../src/engine/config.ts"
+import { composeGates } from "../src/engine/policy.ts"
 import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
 import { findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
@@ -221,4 +222,48 @@ test("pricing: equivalent cost for subscriptions, actual only for metered", () =
   assert.equal(sub.actual, 0)
   const api = estimate(config, models, "anthropic", "claude-opus-5-5", tokens, 0.05)
   assert.equal(api.actual, 0.05)
+})
+
+test("router: a policy gate passes over an entry and reports when to look again", () => {
+  const config = cfg()
+  const pools = new PoolStore(config, () => NOW)
+  const preferred = { chain: "opus", index: 0, variant: "medium" }
+  const gate = composeGates([undefined, (e) => (e.providerID === "claude-agent" ? { reason: "daily cap reached", until: NOW + 1000 } : undefined), () => undefined])
+  const r = route({ config, pools, models: MODELS, preferred, mode: "turn", gate })
+  assert.equal(r.target?.providerID, "xai")
+  assert.deepEqual(r.skipped, ["claude-agent/opus: daily cap reached"])
+  const all = route({ config, pools, models: MODELS, preferred, mode: "turn", gate: (e) => ({ reason: "blocked", until: e.providerID === "openai" ? NOW + 5 : NOW + 50 }) })
+  assert.equal(all.target, undefined)
+  assert.equal(!all.target ? all.earliest : 0, NOW + 5)
+  assert.equal(!all.target ? all.next?.providerID : "", "openai")
+  assert.equal(composeGates([undefined]), undefined)
+})
+
+test("stored settings: overlay, paths and validation", () => {
+  assert.deepEqual(overlay({ claude: { usageProbe: true, warnAtPct: 80 } }, { claude: { warnAtPct: 90 }, dryRun: true }), { claude: { usageProbe: true, warnAtPct: 90 }, dryRun: true })
+  assert.deepEqual(withSetting({}, "claude.warnAtPct", 90), { claude: { warnAtPct: 90 } })
+  assert.deepEqual(withSetting({ claude: { warnAtPct: 90 } }, "claude.warnAtPct", undefined), {})
+
+  const options = { claude: { usageProbe: true } }
+  const ok = checkSetting(options, {}, "claude.cutoverAtPct", 95)
+  assert.ok(ok.ok)
+  assert.equal(loadConfig(overlay(options, ok.ok ? ok.stored : {})).config.claude.cutoverAtPct, 95)
+  // The configured value stays underneath and comes back when the setting is cleared.
+  assert.equal(loadConfig(overlay(options, ok.ok ? ok.stored : {})).config.claude.usageProbe, true)
+
+  const refused = (path: string, value: unknown) => {
+    const r = checkSetting(options, {}, path, value)
+    assert.equal(r.ok, false, path)
+    return r.ok ? "" : r.error
+  }
+  assert.match(refused("claude.cutoverAtPct", "high"), /should be number/)
+  assert.match(refused("nope.thing", 1), /Unknown option/)
+  assert.match(refused("dashboard.host", "0.0.0.0"), /opencode\.jsonc/)
+  assert.match(refused("dashboard", { host: "0.0.0.0" }), /opencode\.jsonc/)
+  assert.match(refused("claude.cutoverAtPct", -1), /zero or more/)
+  assert.match(refused("__proto__.polluted", true), /not a setting/)
+  assert.match(refused("chains.opus", ["nope"]), /Invalid model reference/)
+  assert.equal(({} as Record<string, unknown>).polluted, undefined)
+  // A problem that was already in the configuration does not block an unrelated change.
+  assert.ok(checkSetting({ typo: 1 }, {}, "claude.warnAtPct", 70).ok)
 })
