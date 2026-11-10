@@ -122,7 +122,7 @@ async function usage(args: Args, out: Out, paths: Paths): Promise<number> {
   }
   const cells = (r: Row) => [r.key, String(r.requests), tok(r.input), tok(r.output + r.reasoning), tok(r.cacheRead + r.cacheWrite), tok(r.tokens), prices.size ? `${usd(r.value)}${r.priced ? "" : "*"}` : "–"]
   out.log(table([by === "day" ? "Day" : by === "model" ? "Model" : by === "source" ? "Source" : "Project", "Requests", "Input", "Output", "Cached", "Tokens", "Value"], [...rows.map(cells), cells(total)]))
-  if (!prices.size) out.log("\nValue needs OpenCode's model catalogue (~/.cache/opencode/models.json), which was not found.")
+  if (!prices.size) out.log("\nValue needs list prices: run OpenCode with quota-router once, or keep OpenCode's model catalogue (~/.cache/opencode/models.json).")
   else if (!total.priced) out.log("\n* Some models have no list price; their value is left out.")
   return 0
 }

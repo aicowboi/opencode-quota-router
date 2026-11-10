@@ -31,6 +31,7 @@ Only to the providers you already use: `api.anthropic.com` for the Claude usage 
 `~/.local/share/opencode-quota-router/` (or under `$XDG_DATA_HOME`):
 - `router.db`: usage, routing and session history (SQLite);
 - `router.log`;
+- `prices.json`: the list prices OpenCode gives for the models it offers, for the `quota-router` command;
 - `dashboard.json`: the dashboard's local address and the process ID, so the terminal part and the command line can find it (readable only by you, removed when the plugin is removed).
 
 Session titles and project paths are stored there. No prompts, responses, file contents or credentials are stored.

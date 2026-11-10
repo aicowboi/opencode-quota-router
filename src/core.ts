@@ -628,6 +628,23 @@ export class Core {
 
   // ---------- models ----------
 
+  /**
+   * Keep a copy of the list prices OpenCode gives, for the `quota-router` command, which runs without OpenCode and
+   * would otherwise only have OpenCode's catalogue file, which can be weeks old. Prices only; nothing about usage.
+   */
+  notePrices() {
+    try {
+      const prices: Record<string, unknown> = {}
+      for (const [key, m] of this.models) if (m.cost?.some((t) => t.input > 0 || t.output > 0)) prices[key] = m.cost
+      const file = path.join(dataDir(), "prices.json")
+      const tmp = `${file}.${process.pid}.tmp`
+      fs.writeFileSync(tmp, JSON.stringify({ at: Date.now(), prices }), { mode: 0o600 })
+      fs.renameSync(tmp, file)
+    } catch (error) {
+      this.log.warn("could not save prices", { error: String(error) })
+    }
+  }
+
   async refreshModels(force = false) {
     if (!this.ctx || (!force && Date.now() - this.modelsAt < 5 * 60_000 && this.models.size > 0)) return
     try {
@@ -654,6 +671,7 @@ export class Core {
         const changed = providers(next) !== providers(this.models)
         this.models = next
         this.modelsAt = Date.now()
+        this.notePrices()
         if (changed || force) await this.refreshConnections()
       }
     } catch (error) {

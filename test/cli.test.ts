@@ -13,6 +13,9 @@ import { dashboardFile, notedPort, reader } from "../src/tui-feed.ts"
 import { VERSION } from "../src/version.ts"
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qr-cli-"))
+// Nothing from this machine: the plugin's files and OpenCode's catalogue are looked for under the temporary folder.
+process.env.XDG_DATA_HOME = path.join(tmp, "data")
+process.env.XDG_CACHE_HOME = path.join(tmp, "cache")
 const T0 = Date.parse("2026-11-09T10:00:00Z")
 const iso = (minutes: number) => new Date(T0 + minutes * 60_000).toISOString()
 const write = (file: string, lines: unknown[]) => {
@@ -123,7 +126,7 @@ test("OpenCode: assistant messages with tokens, read from its database without c
 test("usage totals: grouped, limited to the range, and valued at list price from the catalogue", () => {
   const catalogue = path.join(tmp, "models.json")
   fs.writeFileSync(catalogue, JSON.stringify({ anthropic: { models: { "claude-opus-5-5": { cost: { input: 4, output: 20, cache_read: 0.2, cache_write: 5 } } } }, openai: { models: { "gpt-5.6": { cost: { input: 2, output: 10, cache_read: 0.2, tiers: [{ input: 4, output: 20, cache_read: 0.4, tier: { type: "context", size: 272000 } }] } } } } }))
-  const prices = loadPrices(catalogue)
+  const prices = loadPrices(catalogue, path.join(tmp, "no-snapshot.json"))
   const u = (over: Partial<Usage>): Usage => ({ source: "claude-code", id: "x", at: T0, providerID: "anthropic", model: "claude-opus-5-5", input: 1_000_000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, ...over })
   assert.equal(valueOf(prices, u({})), 4)
   assert.equal(valueOf(prices, u({ providerID: "claude-agent", model: "opus" })), 4)
@@ -138,6 +141,18 @@ test("usage totals: grouped, limited to the range, and valued at list price from
   assert.equal(total.value, 4)
   assert.equal(new Date(rangeStart("today", T0)).getHours(), 0)
   assert.equal(rangeStart("all", T0), 0)
+
+  // The plugin's copy of OpenCode's live prices wins over the catalogue file, which can be weeks old.
+  const snapshot = path.join(tmp, "prices.json")
+  fs.writeFileSync(snapshot, JSON.stringify({ at: T0, prices: { "anthropic/claude-fable-5-2": [{ input: 8, output: 40, cache: { read: 0.2, write: 10 } }], "anthropic/claude-opus-5-5": [{ input: 4, output: 20 }], bad: [{ input: 1, output: 1 }], "x/neg": [{ input: -1, output: 1 }] } }))
+  const both = loadPrices(catalogue, snapshot)
+  assert.equal(valueOf(both, u({ model: "claude-fable-5-2" })), 8)
+  assert.equal(valueOf(both, u({ providerID: "claude-agent", model: "claude-fable-5-2" })), 8)
+  assert.equal(valueOf(both, u({ providerID: "openai", model: "gpt-5.6", input: 300_000 })), 1.2) // still from the catalogue
+  assert.equal(both.has("bad") || both.has("x/neg"), false)
+  assert.equal(loadPrices(path.join(tmp, "no-catalogue.json"), snapshot).size, 2)
+  fs.writeFileSync(snapshot, "{ broken")
+  assert.equal(loadPrices(catalogue, snapshot).size, prices.size)
 })
 
 test("command line: arguments, help, errors, and a usage table from invented logs", async () => {

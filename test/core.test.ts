@@ -9,7 +9,7 @@ import { advise, claudePlan, copilotPlan, PLANS } from "../src/engine/plans.ts"
 import { nextMidnightIn, parseDuration, parseResetText, parseRetryAfter, parseRetryText, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
 import { fasterFirst, findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
-import { costOf, estimate } from "../src/engine/pricing.ts"
+import { aliasTarget, costOf, estimate } from "../src/engine/pricing.ts"
 import { healthGate, speedOf, summariseHealth, unreliable } from "../src/engine/health.ts"
 import { combineRules, matchProject, parseRules, ruledOut, rulesGate } from "../src/engine/rules.ts"
 import { activeSchedules, describeSchedule, describeWhen, parseClock, parseSchedules, scheduleFirst, scheduleGate } from "../src/engine/schedule.ts"
@@ -733,4 +733,28 @@ test("schedules: rules that apply at certain times, in local time", () => {
   // A limit on the provider put first still falls through to the rest of the chain.
   pools.report({ kind: "window", pools: ["xai"], evidence: "limit", resetAt: NOW + 3_600_000 })
   assert.equal(route({ config: evening, pools, models: MODELS, preferred, mode: "turn", first: scheduleFirst(evening, activeSchedules(evening.schedules, at(9, 20))) }).target?.providerID, "claude-agent")
+})
+
+test("pricing: a Claude Code alias stands for the newest model of its family that has a list price", () => {
+  const day = 86_400_000
+  const m = (id: string, released: number | undefined, input: number, output: number): [string, ModelInfo] => [`anthropic/${id}`, { providerID: "anthropic", id, variants: [], released, cost: input || output ? [{ input, output, cache: { read: input / 40, write: input * 1.25 } }] : [] }]
+  const models = new Map<string, ModelInfo>([
+    m("claude-fable-5", 100 * day, 10, 50),
+    m("claude-fable-5-1", 200 * day, 10, 50),
+    m("claude-fable-5-2", 300 * day, 8, 40),
+    m("claude-fable-5-2-fast", 300 * day, 16, 80), // a variant, never what the alias means
+    m("claude-fable-5-3", 400 * day, 0, 0), // listed but not priced yet
+    m("claude-opus-4-5", 50 * day, 5, 25),
+    m("claude-opus-4-5-20251101", 50 * day, 5, 25),
+  ])
+  assert.equal(aliasTarget("fable", models), "claude-fable-5-2")
+  assert.equal(aliasTarget("opus", models), "claude-opus-4-5") // same date: the shorter name
+  assert.equal(aliasTarget("fable"), "claude-fable-5-2") // no model list: the last known target
+  assert.equal(aliasTarget("sonnet", models), "claude-sonnet-5-5")
+  assert.equal(aliasTarget("claude-fable-5-2", models), undefined) // not an alias
+  // Value at API prices for the subscription alias and for the full name both come out at Fable 5.2's price.
+  const { config } = loadConfig({})
+  const tokens = { input: 1_000_000, output: 1_000_000, reasoning: 0, cache: { read: 0, write: 0 } }
+  assert.equal(estimate(config, models, "claude-agent", "fable", tokens, 0).equivalent, 48)
+  assert.equal(estimate(config, models, "claude-agent", "claude-fable-5-2", tokens, 0).equivalent, 48)
 })

@@ -79,8 +79,11 @@ export function statusLine(feed: StatusFeed | undefined, sessionID?: string, tim
  * The file where the server part notes its dashboard's address. The terminal part and the command line don't get the
  * plugin's options (a custom `dashboard.port`), so they look here first.
  */
-export const dashboardFile = (env: Record<string, string | undefined> = process.env) =>
-  path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "opencode-quota-router", "dashboard.json")
+export const dashboardFile = (env: Record<string, string | undefined> = process.env) => pluginFile("dashboard.json", env)
+
+/** A file in the plugin's data folder, found the same way the plugin finds it. */
+export const pluginFile = (name: string, env: Record<string, string | undefined> = process.env) =>
+  path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "opencode-quota-router", name)
 
 /** The port in the dashboard file, when there is one and it is a local address. */
 export function notedPort(file = dashboardFile()): number | undefined {

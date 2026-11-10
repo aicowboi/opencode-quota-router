@@ -59,6 +59,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 - The terminal part (status line and toasts) loads from the installed npm package, and finds the dashboard when its port was changed in `opencode.jsonc`: the server part notes the address in `dashboard.json`, since the terminal part doesn't receive the plugin's options.
 - A second OpenCode with its own data folder keeps its own dashboard, instead of showing the first one's.
+- `quota-router usage` values new models such as Fable 5.2: it uses the list prices OpenCode gives the plugin, which the plugin keeps in `prices.json`, before OpenCode's catalogue file, which can be weeks old.
+- The Claude subscription's model aliases (`opus`, `fable`) are valued at the newest model of their family with a list price, not a fixed one; `fable` had still pointed at Fable 5.1.
 
 ### Security
 

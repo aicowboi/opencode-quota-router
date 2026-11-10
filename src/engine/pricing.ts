@@ -3,17 +3,36 @@
 import type { Config } from "./config.ts"
 import type { CostTier, ModelInfo, Tokens } from "./types.ts"
 
+/** Where Claude Code's model aliases pointed when this was written; used when the model list has no release dates. */
 const CLAUDE_ALIASES: Record<string, string> = {
   opus: "claude-opus-5-5",
   sonnet: "claude-sonnet-5-5",
   haiku: "claude-haiku-5-5",
-  fable: "claude-fable-5-1",
+  fable: "claude-fable-5-2",
+}
+
+const priced = (m: ModelInfo) => m.cost?.some((t) => t.input > 0 || t.output > 0) ?? false
+
+/**
+ * The Anthropic model a Claude Code alias (`opus`, `fable`) stands for: the newest of that family with a list price,
+ * by release date. Variants such as `-fast` are never picked, since the alias doesn't mean them.
+ */
+export function aliasTarget(alias: string, models?: Map<string, ModelInfo>): string | undefined {
+  if (!Object.hasOwn(CLAUDE_ALIASES, alias)) return undefined
+  const line = new RegExp(`^claude-${alias}-\\d+(?:-\\d+)*$`)
+  let best: ModelInfo | undefined
+  for (const m of models?.values() ?? []) {
+    if (m.providerID !== "anthropic" || m.released === undefined || !line.test(m.id) || !priced(m)) continue
+    // Of two with the same date (claude-opus-4-5 and claude-opus-4-5-20251101), the shorter name.
+    if (!best || m.released > best.released! || (m.released === best.released && m.id.length < best.id.length)) best = m
+  }
+  return best?.id ?? CLAUDE_ALIASES[alias]
 }
 
 /** API models whose price stands in for a subscription model that has none in the catalogue. */
-export function priceSources(providerID: string, modelID: string): string[] {
+export function priceSources(providerID: string, modelID: string, models?: Map<string, ModelInfo>): string[] {
   const own = `${providerID}/${modelID}`
-  if (providerID === "claude-agent") return [own, `anthropic/${CLAUDE_ALIASES[modelID] ?? modelID}`]
+  if (providerID === "claude-agent") return [own, `anthropic/${aliasTarget(modelID, models) ?? modelID}`]
   if (providerID === "github-copilot") {
     if (modelID.startsWith("claude-")) return [`anthropic/${modelID.replaceAll(".", "-")}`, own]
     if (modelID.startsWith("grok-")) return [`xai/${modelID}`, own]
@@ -41,7 +60,7 @@ export function costOf(tiers: CostTier[] | undefined, tokens: Tokens): number {
 
 export function estimate(config: Config, models: Map<string, ModelInfo>, providerID: string, modelID: string, tokens: Tokens, reported: number) {
   let equivalent = 0
-  for (const key of priceSources(providerID, modelID)) {
+  for (const key of priceSources(providerID, modelID, models)) {
     const tiers = models.get(key)?.cost
     if (tiers && tiers.length > 0 && tiers.some((t) => t.input > 0 || t.output > 0)) {
       equivalent = costOf(tiers, tokens)

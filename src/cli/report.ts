@@ -5,14 +5,28 @@ import path from "node:path"
 import { costOf, priceSources } from "../engine/pricing.ts"
 import type { CostTier } from "../engine/types.ts"
 import type { Usage } from "./readers.ts"
+import { pluginFile } from "../tui-feed.ts"
 
 export type Prices = Map<string, CostTier[]>
 
+const validTiers = (v: unknown): v is CostTier[] =>
+  Array.isArray(v) && v.length > 0 && v.every((t) => t && typeof t === "object" && typeof t.input === "number" && typeof t.output === "number" && t.input >= 0 && t.output >= 0)
+
 /**
- * List prices from the model catalogue OpenCode keeps (`~/.cache/opencode/models.json`, from models.dev). Without it
- * the value column is left out. Prices are per million tokens.
+ * List prices, per million tokens: the plugin's copy of the prices OpenCode gives it (`prices.json`, kept current
+ * while OpenCode runs), over the model catalogue OpenCode keeps on disk (`~/.cache/opencode/models.json`, from
+ * models.dev, which can be weeks old). Without either, the value column is left out.
  */
-export function loadPrices(file = path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "opencode", "models.json")): Prices {
+export function loadPrices(file = path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "opencode", "models.json"), snapshot = pluginFile("prices.json")): Prices {
+  const out = catalogPrices(file)
+  try {
+    const noted = JSON.parse(fs.readFileSync(snapshot, "utf8"))?.prices
+    if (noted && typeof noted === "object") for (const [key, tiers] of Object.entries(noted)) if (key.includes("/") && validTiers(tiers)) out.set(key, tiers)
+  } catch {}
+  return out
+}
+
+function catalogPrices(file: string): Prices {
   const out: Prices = new Map()
   let catalogue: any
   try {

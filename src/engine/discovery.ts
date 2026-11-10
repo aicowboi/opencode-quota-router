@@ -160,7 +160,7 @@ export type Suggestion = { chain: string; ref: string; providerID: string; kind:
 /** List price per million output tokens, falling back to the API model a subscription model stands in for. */
 function outputPrice(models: Map<string, ModelInfo>, m: ModelInfo | undefined): number | undefined {
   if (!m) return undefined
-  for (const key of priceSources(m.providerID, m.id)) {
+  for (const key of priceSources(m.providerID, m.id, models)) {
     const tiers = models.get(key)?.cost
     const tier = tiers?.find((t) => !t.tier) ?? tiers?.[0]
     if (tier && tier.output > 0) return tier.output
@@ -170,7 +170,7 @@ function outputPrice(models: Map<string, ModelInfo>, m: ModelInfo | undefined): 
 
 /** A model's family, or that of the API model it stands in for (Claude subscription aliases carry none). */
 function familyOf(models: Map<string, ModelInfo>, m: ModelInfo): string | undefined {
-  for (const key of [refKey(m), ...priceSources(m.providerID, m.id)]) if (models.get(key)?.family) return models.get(key)!.family
+  for (const key of [refKey(m), ...priceSources(m.providerID, m.id, models)]) if (models.get(key)?.family) return models.get(key)!.family
   return undefined
 }
 

@@ -287,7 +287,7 @@ Commands that change a setting store it in the plugin's own database, on top of 
 | `quota-router doctor` | The plugin's health check; exits with 1 when a check fails |
 | `quota-router open` | Opens the dashboard |
 
-`usage` and `limits` work without OpenCode running. They only read the logs, never change them, and keep a cache of what they've read in `~/.cache/quota-router` (readable only by you) so later runs take a fraction of a second. Values use the model prices in OpenCode's model catalogue (`~/.cache/opencode/models.json`); a model with no list price there is marked and left out of the value. Cursor keeps no token counts on disk, so it can't be included.
+`usage` and `limits` work without OpenCode running. They only read the logs, never change them, and keep a cache of what they've read in `~/.cache/quota-router` (readable only by you) so later runs take a fraction of a second. Values use the same list prices as the dashboard: the plugin keeps a copy of the prices OpenCode gives it, and `usage` falls back to OpenCode's model catalogue file (`~/.cache/opencode/models.json`), which can be weeks old, for models the plugin hasn't seen. A model with no list price in either is marked and left out of the value. Cursor keeps no token counts on disk, so it can't be included.
 
 To show the status line in your shell prompt, call `quota-router prompt` from it. It answers within half a second and prints nothing when there's nothing to show. For example, in zsh:
 

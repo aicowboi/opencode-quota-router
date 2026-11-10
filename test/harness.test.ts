@@ -483,6 +483,17 @@ test("dry run records what routing would do and changes nothing", async () => {
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
 })
 
+test("the prices OpenCode gives are kept for the command line, with nothing else", async () => {
+  await core.refreshModels(true)
+  const file = path.join(process.env.XDG_DATA_HOME!, "opencode-quota-router", "prices.json")
+  const saved = JSON.parse(fs.readFileSync(file, "utf8"))
+  assert.deepEqual(Object.keys(saved).sort(), ["at", "prices"])
+  // Only priced models: the Claude subscription has no price of its own.
+  assert.deepEqual(Object.keys(saved.prices).sort(), ["anthropic/claude-opus-5-5", "github-copilot/claude-opus-5.5", "openai/gpt-6.1-sol", "xai/grok-4.7"])
+  assert.deepEqual(saved.prices["anthropic/claude-opus-5-5"], [{ input: 4, output: 20, cache: { read: 0.2, write: 5 } }])
+  assert.equal((fs.statSync(file).mode & 0o777).toString(8), "600")
+})
+
 test("doctor reports the setup without touching credentials", async () => {
   const { runDoctor, doctorText, doctorNote, when } = await import("../src/doctor.ts")
   const by = () => Object.fromEntries(runDoctor(core).map((c: any) => [c.id, c]))
