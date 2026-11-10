@@ -1110,3 +1110,18 @@ test("status line: the session's provider and window use, the provider it left, 
   assert.equal(await read("/api/status", ok), undefined)
   assert.equal(asked.length, 10)
 })
+
+test("dashboard page: accessibility basics stay in place", async () => {
+  const fs = await import("node:fs")
+  const html = fs.readFileSync(new URL("../src/dashboard/page.html", import.meta.url), "utf8")
+  assert.match(html, /<html lang="en">/)
+  assert.match(html, /<a class="skip" href="#main">/)
+  assert.match(html, /<main[^>]*id="main"/)
+  assert.match(html, /id="announce" role="status" aria-live="polite"/)
+  assert.match(html, /prefers-reduced-motion/)
+  assert.match(html, /:focus-visible \{ outline/)
+  // --faint fails contrast for text; it is for lines and marks only.
+  assert.deepEqual(html.match(/(?<![-\w])color: var\(--faint\)/g), null)
+  // Every icon-only button has a name.
+  for (const b of html.matchAll(/<button[^>]*>\s*<svg/g)) assert.match(b[0], /aria-label="/)
+})

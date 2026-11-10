@@ -6,11 +6,12 @@
 <meta name="color-scheme" content="dark light">
 <title>Quota Router</title>
 <style>
-/* Palette: warm graphite with muted, earthy provider colours. Colour carries meaning (provider, state), never decoration. */
+/* Palette: warm graphite with muted, earthy provider colours. Colour carries meaning (provider, state), never decoration.
+   Text colours meet WCAG AA (4.5:1) on every background in both schemes; --faint is for lines and marks only, never text. */
 :root {
   --bg: #121210; --surface: #181816; --raised: #1f1e1b; --line: #2a2925; --line-strong: #3a3833;
   --text: #ebe8e1; --soft: #b9b5ab; --muted: #8a867c; --faint: #5f5c55;
-  --ok: #7fae8b; --warn: #d6a24a; --bad: #d0644f; --info: #8fa6c9;
+  --ok: #7fae8b; --warn: #d6a24a; --bad: #d46651; --info: #8fa6c9;
   --claude: #d2785a; --xai: #b6b0a3; --copilot: #9787e0; --anthropic: #c7a56b; --openai: #74ab8e; --other: #7d8899;
   --focus: #e8c27a;
   --serif: "New York", "Iowan Old Style", Georgia, serif;
@@ -20,8 +21,8 @@
 @media (prefers-color-scheme: light) {
   :root {
     --bg: #f6f4ef; --surface: #fbfaf7; --raised: #efece5; --line: #e2ded5; --line-strong: #cfcac0;
-    --text: #1d1c19; --soft: #4a4740; --muted: #7a766c; --faint: #a6a196;
-    --ok: #3f8a57; --warn: #b07a14; --bad: #b4432f; --info: #4a6a9c;
+    --text: #1d1c19; --soft: #4a4740; --muted: #6d6960; --faint: #a6a196;
+    --ok: #36754a; --warn: #8b6010; --bad: #b4432f; --info: #4a6a9c;
     --claude: #c25e3d; --xai: #6f6a5f; --copilot: #6d5bd0; --anthropic: #a8823c; --openai: #3f8a66; --other: #66707f;
     --focus: #b07a14;
   }
@@ -32,6 +33,11 @@ body { margin: 0; color: var(--text); font: 14px/1.5 var(--sans); -webkit-font-s
 button, input, select { font: inherit; color: inherit }
 button { background: none; border: 0; padding: 0; cursor: pointer }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0 }
+.skip { position: absolute; left: 16px; top: -48px; z-index: 50; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 12px }
+.skip:focus { top: 12px }
+.chart-wrap:focus-visible { outline-offset: 4px }
+rect.hit.on { fill: color-mix(in srgb, var(--text) 6%, transparent) }
 a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 3px }
 .wrap { max-width: 1240px; margin: 0 auto; padding: 0 32px }
 .muted { color: var(--muted) } .soft { color: var(--soft) } .mono { font-family: var(--mono); font-size: 12.5px }
@@ -74,7 +80,7 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.005em }
 .rung::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 2px; background: transparent }
 .rung.serving::before { background: var(--c) }
 .rung.off { opacity: .5 }
-.rank { color: var(--faint); font-size: 13px; padding-top: 1px }
+.rank { color: var(--muted); font-size: 13px; padding-top: 1px }
 .pname { font-weight: 600 } .pkind { color: var(--muted); font-size: 12px }
 .gauge { display: grid; grid-template-columns: 76px 1fr auto; gap: 4px 10px; align-items: center; font-size: 12.5px }
 .gauge + .gauge { margin-top: 7px }
@@ -128,7 +134,7 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.005em }
 .disc { border-bottom: 1px solid var(--line) }
 .disc > button.sum { display: flex; width: 100%; gap: 12px; align-items: baseline; padding: 11px 0; text-align: left }
 .disc > button.sum:hover .chev { color: var(--text) }
-.chev { color: var(--faint); width: 12px; display: inline-block; transition: transform .12s; flex: none }
+.chev { color: var(--muted); width: 12px; display: inline-block; transition: transform .12s; flex: none }
 .disc[open] > button.sum .chev { transform: rotate(90deg) }
 .disc .body { display: none; padding: 0 0 10px 24px }
 .disc[open] .body { display: block }
@@ -147,7 +153,7 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.005em }
 .tabs { display: flex; gap: 16px; font-size: 13px; flex-wrap: wrap }
 .tabs button { color: var(--muted); padding: 2px 0; border-bottom: 1.5px solid transparent }
 .tabs button[aria-pressed="true"] { color: var(--text); border-color: var(--text) }
-.tabs .n { color: var(--faint); margin-left: 4px }
+.tabs .n { color: var(--muted); margin-left: 4px }
 .toolbar { display: flex; gap: 16px; align-items: center; margin-bottom: 10px; flex-wrap: wrap }
 .search { flex: 1; min-width: 220px; background: transparent; border: 0; border-bottom: 1px solid var(--line-strong); padding: 6px 0; outline: none }
 .search:focus { border-color: var(--focus) }
@@ -171,7 +177,7 @@ tr.other td { color: var(--muted) }
 .tip { position: fixed; pointer-events: none; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,.25); z-index: 30; min-width: 170px; display: none }
 .tip .r { display: flex; justify-content: space-between; gap: 16px }
 
-footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height: 1.7 }
+footer { padding: 36px 0 48px; color: var(--muted); font-size: 12px; line-height: 1.7 }
 .check { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px }
 .check:first-child { border-top: 0 }
 .check .fix { color: var(--soft); font-size: 12.5px }
@@ -180,6 +186,7 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to the dashboard</a>
 <header class="mast">
   <div class="wrap">
     <div class="mast-row">
@@ -188,7 +195,7 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
       <div class="seg" id="range" role="group" aria-label="Range"></div>
       <div style="position:relative">
         <button class="iconbtn" id="menuBtn" aria-haspopup="true" aria-expanded="false" aria-label="More actions">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg>
         </button>
         <div class="menu" id="menu" hidden></div>
       </div>
@@ -199,7 +206,7 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
   </div>
 </header>
 
-<main class="wrap">
+<main class="wrap" id="main" tabindex="-1">
   <section aria-labelledby="h-numbers">
     <div class="sec-head"><h2 id="h-numbers">Totals</h2><span class="caption" id="rangeCaption"></span></div>
     <div class="ledger" id="ledger"></div>
@@ -266,6 +273,7 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
 </main>
 
 <footer><div class="wrap" id="footer"></div></footer>
+<div class="sr-only" id="announce" role="status" aria-live="polite"></div>
 <div class="tip" id="tip"></div>
 
 <script>
@@ -274,9 +282,13 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
 const $ = (id) => document.getElementById(id)
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
 const n = (x) => Number(x) || 0
-const fmtN = (x) => { x = n(x); const a = Math.abs(x); return a >= 1e9 ? (x / 1e9).toFixed(2) + "B" : a >= 1e6 ? (x / 1e6).toFixed(1) + "M" : a >= 1e4 ? (x / 1e3).toFixed(0) + "K" : a >= 1e3 ? (x / 1e3).toFixed(1) + "K" : String(Math.round(x)) }
+// Numbers, money and dates follow the browser's language: separators, compact suffixes and currency placement.
+const NF = {}
+const nf = (key, o) => NF[key] ??= new Intl.NumberFormat([], o)
+const fmtN = (x) => { x = n(x); const a = Math.abs(x); if (a < 1e3) return nf("int", { maximumFractionDigits: 0 }).format(x)
+  const d = a >= 1e9 ? 2 : a >= 1e4 && a < 1e6 ? 0 : 1; return nf("c" + d, { notation: "compact", maximumFractionDigits: d }).format(x) }
 const fmtInt = (x) => Math.round(n(x)).toLocaleString()
-const fmtUSD = (x) => { x = n(x); return x >= 1000 ? "$" + Math.round(x).toLocaleString() : x >= 100 ? "$" + x.toFixed(0) : x >= 1 ? "$" + x.toFixed(2) : x > 0 ? "$" + x.toFixed(3) : "$0" }
+const fmtUSD = (x) => { x = n(x); const d = x >= 100 ? 0 : x >= 1 ? 2 : x > 0 ? 3 : 0; return nf("usd" + d, { style: "currency", currency: "USD", minimumFractionDigits: d, maximumFractionDigits: d }).format(x) }
 const fmtDur = (ms) => { ms = Math.max(0, n(ms)); const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), r = s % 60
   return d ? d + "d " + h + "h" : h ? h + "h " + String(m).padStart(2, "0") + "m" : m ? m + "m " + String(r).padStart(2, "0") + "s" : r + "s" }
 const fmtTime = (t) => t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""
@@ -321,7 +333,15 @@ const PKIND = { subscription: "Subscription", metered: "Pay-per-use", local: "Lo
 const providerOf = (model) => String(model || "").split("/")[0]
 
 async function api(path) { const r = await fetch(path, { cache: "no-store" }); if (!r.ok) throw new Error(path + " " + r.status); return r.json() }
-async function act(body) { await fetch("/api/action", { method: "POST", headers: { "content-type": "application/json", "x-quota-router": "1" }, body: JSON.stringify(body) }); refreshState() }
+// Screen readers hear what an action did; a failure is also shown, since nothing else on the page would change.
+const announce = (text) => { const el = $("announce"); el.textContent = ""; setTimeout(() => { el.textContent = text }, 50) }
+async function act(body) {
+  let ok = false
+  try { ok = (await fetch("/api/action", { method: "POST", headers: { "content-type": "application/json", "x-quota-router": "1" }, body: JSON.stringify(body) })).ok } catch {}
+  announce(ok ? "Done." : "That didn't work. Is OpenCode still running?")
+  if (!ok) { const b = $("banner"); b.hidden = false; b.textContent = "The last action failed: the plugin did not answer. Check that OpenCode is running, then try again." }
+  refreshState()
+}
 
 // ---------- state ----------
 const RANGES = [["today", "Today"], ["7d", "7D"], ["30d", "30D"], ["90d", "90D"], ["1y", "12M"], ["all", "All"]]
@@ -393,15 +413,22 @@ function renderMenu() {
   }
 }
 function closeMenu() { $("menu").hidden = true; $("menuBtn").setAttribute("aria-expanded", "false") }
-$("menuBtn").onclick = (e) => { e.stopPropagation(); renderMenu(); const m = $("menu"); m.hidden = !m.hidden; $("menuBtn").setAttribute("aria-expanded", String(!m.hidden)) }
+$("menuBtn").onclick = (e) => { e.stopPropagation(); renderMenu(); const m = $("menu"); m.hidden = !m.hidden; $("menuBtn").setAttribute("aria-expanded", String(!m.hidden)); if (!m.hidden) m.querySelector("button, a")?.focus() }
 document.addEventListener("click", (e) => { if (!$("menu").contains(e.target)) closeMenu() })
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu() })
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("menu").hidden) { closeMenu(); $("menuBtn").focus() } })
+// Up and down move through the menu's items, as in any menu.
+$("menu").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
+  const items = [...$("menu").querySelectorAll("button, a")], i = items.indexOf(document.activeElement)
+  items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus()
+  e.preventDefault()
+})
 
 // ---------- route ladder ----------
 function gauge(label, pct, value, col, cut) {
   pct = Math.max(0, Math.min(100, n(pct)))
   const c = cut && pct >= cut ? "var(--bad)" : pct >= 85 ? "var(--warn)" : col
-  return '<div class="gauge"><span class="lab">' + esc(label) + '</span><span class="track" style="--c:' + c + '"><i style="width:' + pct + '%"></i>' + (cut ? '<span class="cut" style="left:' + cut + '%" title="Routing moves away at ' + cut + '%"></span>' : "") + '</span><span class="val">' + value + "</span></div>"
+  return '<div class="gauge"><span class="lab">' + esc(label) + '</span><span class="track" aria-hidden="true" style="--c:' + c + '"><i style="width:' + pct + '%"></i>' + (cut ? '<span class="cut" style="left:' + cut + '%" title="Routing moves away at ' + cut + '%"></span>' : "") + '</span><span class="val">' + value + "</span></div>"
 }
 
 // Where a plan window is heading at its recent pace. Only said when it would run out before it resets.
@@ -716,7 +743,7 @@ function bucketLabel(b, bucket, long) {
 function renderChart() {
   const el = $("chart"), rows = series.rows, bucket = series.bucket, fmt = fmtFor(metric)
   $("bucketCaption").textContent = { hour: "By hour", day: "By day", week: "By week", month: "By month" }[bucket]
-  if (!rows.length) { el.innerHTML = '<div class="empty">No usage ' + esc(RANGE_TEXT[range]) + ".</div>"; $("legend").innerHTML = ""; return }
+  if (!rows.length) { el.innerHTML = '<div class="empty">No usage ' + esc(RANGE_TEXT[range]) + ".</div>"; $("legend").innerHTML = ""; el.removeAttribute("tabindex"); el.removeAttribute("role"); el.removeAttribute("aria-label"); return }
   const buckets = [...new Set(rows.map((r) => r.bucket))].sort()
   const order = ["claude-agent", "xai", "github-copilot", "anthropic", "openai"]
   const provs = [...new Set(rows.map((r) => r.provider))].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99))
@@ -727,7 +754,9 @@ function renderChart() {
   const step = iw / buckets.length, bw = Math.max(2, Math.min(36, step * 0.62))
   const ticks = 4, nice = (v) => { const p = Math.pow(10, Math.floor(Math.log10(v))), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p }
   const top = nice(max / ticks) * ticks
-  let svg = '<svg height="' + H + '" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + esc(metric + " per " + bucket) + '">'
+  const peak = totals.indexOf(Math.max(...totals)), what = { tokens: "Tokens", equiv: "Value at API prices", actual: "Actual spend" }[metric] || metric
+  const summary = what + " " + ({ hour: "by hour", day: "by day", week: "by week", month: "by month" }[bucket]) + ", " + RANGE_TEXT[range] + ": " + fmt(totals.reduce((a, b) => a + b, 0)) + " in all, most on " + bucketLabel(buckets[peak], bucket, true) + " (" + fmt(totals[peak]) + ")."
+  let svg = '<svg height="' + H + '" viewBox="0 0 ' + W + " " + H + '" aria-hidden="true">'
   for (let i = 0; i <= ticks; i++) { const y = pt + ih - ih * i / ticks; svg += '<line x1="' + pl + '" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--line)" ' + (i ? 'stroke-dasharray="2 4"' : "") + '/><text x="' + (pl - 10) + '" y="' + (y + 4) + '" text-anchor="end">' + esc(fmt(top * i / ticks)) + "</text>" }
   const every = Math.ceil(buckets.length / Math.max(4, Math.floor(iw / 70)))
   buckets.forEach((b, i) => {
@@ -737,7 +766,14 @@ function renderChart() {
     svg += '<rect class="hit" data-b="' + esc(b) + '" x="' + (pl + i * step) + '" y="' + pt + '" width="' + step + '" height="' + ih + '" fill="transparent"/>'
     if (i % every === 0) svg += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">' + esc(bucketLabel(b, bucket)) + "</text>"
   })
-  el.innerHTML = svg + "</svg>"
+  // The same figures as a table for screen readers; sighted keyboard users step through the bars with the arrow keys.
+  const table = '<table class="sr-only"><caption>' + esc(summary) + "</caption><thead><tr><th scope=\"col\">Period</th>" + provs.map((p) => '<th scope="col">' + esc(pname(p)) + "</th>").join("") + '<th scope="col">Total</th></tr></thead><tbody>' +
+    buckets.map((b, i) => '<tr><th scope="row">' + esc(bucketLabel(b, bucket, true)) + "</th>" + provs.map((p) => "<td>" + esc(fmt(val[b + "|" + p] || 0)) + "</td>").join("") + "<td>" + esc(fmt(totals[i])) + "</td></tr>").join("") + "</tbody></table>"
+  el.innerHTML = svg + "</svg>" + table
+  el.classList.add("chart-wrap")
+  el.tabIndex = 0
+  el.setAttribute("role", "group")
+  el.setAttribute("aria-label", summary + " Use the left and right arrow keys to read each period.")
   $("legend").innerHTML = provs.map((p) => '<span><span class="dot" style="background:' + color(p) + '"></span>' + esc(pname(p)) + "</span>").join("")
   const tip = $("tip")
   for (const hit of el.querySelectorAll(".hit")) {
@@ -751,6 +787,23 @@ function renderChart() {
     }
     hit.onmouseleave = () => { tip.style.display = "none" }
   }
+  const hits = [...el.querySelectorAll(".hit")]
+  let at = -1
+  const show = (i) => {
+    at = Math.max(0, Math.min(hits.length - 1, i))
+    for (const h of hits) h.classList.toggle("on", h === hits[at])
+    const r = hits[at].getBoundingClientRect()
+    hits[at].onmousemove({ clientX: r.left + r.width / 2, clientY: r.top + 10 })
+    const b = buckets[at]
+    announce(bucketLabel(b, bucket, true) + ": " + provs.filter((p) => val[b + "|" + p]).map((p) => pshort(p) + " " + fmt(val[b + "|" + p])).concat("total " + fmt(totals[at])).join(", "))
+  }
+  el.onkeydown = (e) => {
+    const k = { ArrowRight: at + 1, ArrowLeft: at < 0 ? hits.length - 1 : at - 1, Home: 0, End: hits.length - 1 }[e.key]
+    if (k === undefined) return
+    e.preventDefault()
+    show(k)
+  }
+  el.onblur = () => { tip.style.display = "none"; for (const h of hits) h.classList.remove("on"); at = -1 }
 }
 
 function renderAllowances(claudeHist, copilotHist) {
@@ -764,7 +817,8 @@ function renderAllowances(claudeHist, copilotHist) {
   const W = Math.max(el.clientWidth, 320), H = 150, pl = 52, pb = 22, pt = 8, iw = W - pl - 4, ih = H - pb - pt
   const X = (t) => pl + (t - t0) / (t1 - t0) * iw, Y = (v) => pt + ih - ih * Math.min(v, 100) / 100
   const cols = { "Claude 5-hour": "var(--claude)", "Claude weekly": "color-mix(in srgb, var(--claude) 55%, var(--muted))", "Copilot credits": "var(--copilot)" }
-  let svg = '<svg height="' + H + '" viewBox="0 0 ' + W + " " + H + '">'
+  const latest = Object.entries(series2).map(([name, pts]) => name + " " + Math.round(pts[pts.length - 1][1]) + "%")
+  let svg = '<svg height="' + H + '" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + esc("Allowance used over time, " + RANGE_TEXT[range] + ". Latest: " + latest.join(", ") + ".") + '">'
   for (const v of [0, 50, 100]) svg += '<line x1="' + pl + '" x2="' + W + '" y1="' + Y(v) + '" y2="' + Y(v) + '" stroke="var(--line)" ' + (v ? 'stroke-dasharray="2 4"' : "") + '/><text x="' + (pl - 10) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + v + "%</text>"
   if (state && state.claude) svg += '<line x1="' + pl + '" x2="' + W + '" y1="' + Y(state.claude.cutoverAtPct) + '" y2="' + Y(state.claude.cutoverAtPct) + '" stroke="var(--bad)" stroke-opacity=".45" stroke-dasharray="1 3"/>'
   const names = Object.keys(series2)
