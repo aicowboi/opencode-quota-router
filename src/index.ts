@@ -9,7 +9,7 @@ import { onCodexResponse, onEvent, onHttpResponse, onPrompt, onRetry } from "./c
 import { Core, VERSION } from "./core.ts"
 import { startDashboard } from "./dashboard/server.ts"
 import { dashboardFile } from "./tui-feed.ts"
-import { doctorText, runDoctor } from "./doctor.ts"
+import { doctorNote, runDoctor } from "./doctor.ts"
 import { codexWindows, headroom } from "./engine/headers.ts"
 import { orderedChain } from "./engine/router.ts"
 import { execFile } from "node:child_process"
@@ -291,9 +291,9 @@ export default {
               break
             }
             case "doctor":
-              // The dashboard shows the checks straight away; the note repeats them in the session at its next turn.
+              // The dashboard shows every check straight away; the note in the session keeps to what needs attention.
               if (core.dashboardURL) void openURL(`${core.dashboardURL}/#doctor`)
-              text = `quota-router health check\n${doctorText(runDoctor(core))}`
+              text = doctorNote(runDoctor(core), { full: arg === "full", dashboard: core.dashboardURL })
               break
             default:
               // status / dashboard: open the dashboard. A queued note would only appear on the next turn.

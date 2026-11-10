@@ -168,6 +168,9 @@ body.settings-view main > :not(#settings) { display: none }
 .events li { padding: 2px 0 }
 .more { color: var(--muted); font-size: 12.5px; padding: 8px 0 }
 .more:hover { color: var(--text) }
+.more + .more { margin-left: 14px }
+/* A hidden section keeps only its heading and the Show button. */
+section.folded .caption, section.folded .more:not([data-hide]), section.folded > :not(.sec-head) { display: none }
 
 /* Filters and tabs */
 .tabs { display: flex; gap: 16px; font-size: 13px; flex-wrap: wrap }
@@ -282,7 +285,7 @@ footer { padding: 36px 0 48px; color: var(--muted); font-size: 12px; line-height
   </section>
 
   <section aria-labelledby="h-advice" id="advice">
-    <div class="sec-head"><h2 id="h-advice">Plan advice</h2><span class="caption" id="adviceCaption">Whether each subscription fits how you used it</span><span class="spacer"></span><button class="more" id="adviceRun">Work it out</button></div>
+    <div class="sec-head"><h2 id="h-advice">Plan advice</h2><span class="caption" id="adviceCaption">Whether each subscription fits how you used it</span><span class="spacer"></span><button class="more" id="adviceRun">Work it out</button><button class="more" data-hide="advice" aria-controls="adviceList" aria-expanded="true">Hide</button></div>
     <div id="adviceList"></div>
   </section>
 
@@ -293,7 +296,7 @@ footer { padding: 36px 0 48px; color: var(--muted); font-size: 12px; line-height
   </section>
 
   <section aria-labelledby="h-doctor" id="doctor">
-    <div class="sec-head"><h2 id="h-doctor">Health check</h2><span class="caption" id="doctorCaption">What is connected, what would be used, and what needs attention</span><span class="spacer"></span><button class="more" id="doctorRun">Run check</button></div>
+    <div class="sec-head"><h2 id="h-doctor">Health check</h2><span class="caption" id="doctorCaption">What is connected, what would be used, and what needs attention</span><span class="spacer"></span><button class="more" id="doctorRun">Run check</button><button class="more" data-hide="doctor" aria-controls="doctorList" aria-expanded="true">Hide</button></div>
     <div id="doctorList"></div>
   </section>
 </main>
@@ -753,6 +756,21 @@ async function loadAdvice() {
   } catch { el.innerHTML = '<div class="empty">The advice could not be worked out.</div>' }
   el.removeAttribute("aria-busy")
 }
+// Health check and Plan advice can be hidden; the choice is remembered. Asking for one (/router doctor, /router advice) shows it again.
+function fold(id, hidden) {
+  const sec = $(id), btn = sec.querySelector("[data-hide]")
+  sec.classList.toggle("folded", hidden)
+  btn.textContent = hidden ? "Show" : "Hide"
+  btn.setAttribute("aria-expanded", String(!hidden))
+  btn.setAttribute("aria-label", (hidden ? "Show " : "Hide ") + sec.querySelector("h2").textContent)
+  if (hidden) localStorage.setItem("qr.hide." + id, "1"); else localStorage.removeItem("qr.hide." + id)
+}
+for (const btn of document.querySelectorAll("[data-hide]")) {
+  const id = btn.dataset.hide
+  fold(id, localStorage.getItem("qr.hide." + id) === "1" && location.hash !== "#" + id)
+  btn.onclick = () => { const hidden = !$(id).classList.contains("folded"); fold(id, hidden); if (!hidden && id === "doctor") loadDoctor(); announce($(id).querySelector("h2").textContent + (hidden ? " hidden." : " shown.")) }
+}
+addEventListener("hashchange", () => { const id = location.hash.slice(1); if ((id === "doctor" || id === "advice") && $(id).classList.contains("folded")) fold(id, false) })
 $("adviceRun").onclick = loadAdvice
 if (location.hash === "#advice") loadAdvice().then(() => $("advice").scrollIntoView())
 addEventListener("hashchange", () => { if (location.hash === "#advice") loadAdvice() })

@@ -32,7 +32,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Efficiency figures on the dashboard: cache hit rate, tokens per tool call, failed request rate and time lost to limits, for the range shown.
 - Forecasts: the dashboard and `/router doctor` say when a Claude, ChatGPT or Copilot window is on pace to run out before it resets.
 - Plan advice (`/router advice` and a dashboard section): whether each subscription fits how it was used, from the local record of limits, usage checks and pay-per-use spend.
-- `/router doctor` and a Health check section on the dashboard: connected providers, chains with no fallback, models a provider no longer offers, failing usage checks, and what to change.
+- `/router doctor` and a Health check section on the dashboard: connected providers, chains with no fallback, models a provider no longer offers, failing usage checks, and what to change. The note left in the session lists only what needs attention (`/router doctor full` for everything), and the Health check and Plan advice sections can be hidden.
 - Accessibility: the dashboard can be used from the keyboard and with a screen reader (skip link, menu keys, a summary and data table for each chart, actions announce whether they worked), text meets WCAG AA contrast in both schemes, and numbers and money follow the browser's language. A failed action now says so instead of doing nothing.
 - OpenTelemetry export (`telemetry`): tokens, costs, requests, fallbacks, time limited and plan utilisation as OTLP/HTTP JSON metrics, and optionally one log record per limit, switch and recovery. Off by default; identity and project attributes are opt-in; the standard `OTEL_*` variables are honoured. See `docs/telemetry.md`.
 

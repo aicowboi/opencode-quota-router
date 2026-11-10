@@ -14,6 +14,15 @@ import { VERSION, type Core, type ProbeStatus } from "./core.ts"
 import { dataDir } from "./log.ts"
 import { orderedChain } from "./engine/router.ts"
 
+/** A time as people say it: "14:10" today, "Fri 09:00" this week, "12 Dec 09:00" further off. */
+export function when(at: number, now: number = Date.now()): string {
+  const d = new Date(at)
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  if (d.toDateString() === new Date(now).toDateString()) return time
+  if (Math.abs(at - now) < 6 * 86_400_000) return `${d.toLocaleDateString([], { weekday: "short" })} ${time}`
+  return `${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${time}`
+}
+
 export type Check = {
   id: string
   status: "ok" | "warn" | "fail" | "info"
@@ -70,7 +79,7 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   const metered = connected.filter((id) => inChains.has(id) && config.providers[id]?.kind === "metered" && config.providers[id]?.allow !== "never")
   const capped = config.spend.dailyUsd > 0 || config.spend.monthlyUsd > 0
   const blocks = core.spendBlocks(now)
-  for (const [id, b] of Object.entries(blocks)) add({ id: `spend-${id}`, status: "warn", title: id === "*" ? "Spend cap reached for pay-per-use providers" : `Spend cap reached for ${id}`, detail: `${b.reason}; routing passes ${id === "*" ? "them" : "it"} over until ${new Date(b.until ?? now).toLocaleString()}` })
+  for (const [id, b] of Object.entries(blocks)) add({ id: `spend-${id}`, status: "warn", title: id === "*" ? "Spend cap reached for pay-per-use providers" : `Spend cap reached for ${id}`, detail: `${b.reason}; routing passes ${id === "*" ? "them" : "it"} over until ${when(b.until ?? now, now)}` })
   if (metered.length && !capped && metered.some((id) => !config.spend.providers[id]))
     add({ id: "spend", status: "info", title: "No spend cap on pay-per-use providers", detail: `${metered.join(", ")} can be used without limit when every subscription is limited.`, fix: 'Set "spend": { "dailyUsd": 10 } to cap what routing may spend.' })
   else if (metered.length && !Object.keys(blocks).length) add({ id: "spend", status: "ok", title: "Spend caps are set", detail: [config.spend.dailyUsd && `$${config.spend.dailyUsd} a day`, config.spend.monthlyUsd && `$${config.spend.monthlyUsd} a month`, ...Object.entries(config.spend.providers).map(([id, c]) => `${id}: ${[c.dailyUsd && `$${c.dailyUsd} a day`, c.monthlyUsd && `$${c.monthlyUsd} a month`].filter(Boolean).join(", ")}`)].filter(Boolean).join(" · ") })
@@ -93,7 +102,7 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   const activeNow = core.schedules(now)
   for (const [i, sc] of config.schedules.entries()) {
     const on = activeNow.find((a) => a.name === sc.name)
-    add({ id: `schedule-${i}`, status: "info", title: `Schedule ${sc.name}: ${on ? `applies now${on.until ? ` until ${new Date(on.until).toLocaleString()}` : ""}` : "not now"}`, detail: `${describeWhen(sc)} · ${describeSchedule(sc)}` })
+    add({ id: `schedule-${i}`, status: "info", title: `Schedule ${sc.name}: ${on ? `applies now${on.until ? ` until ${when(on.until, now)}` : ""}` : "not now"}`, detail: `${describeWhen(sc)} · ${describeSchedule(sc)}` })
     const known = new Set([...Object.keys(config.providers), "subscription", "metered", "local"])
     const unknown = [...sc.deny, ...(sc.allow ?? []), ...sc.first].filter((x) => !known.has(x))
     if (unknown.length) add({ id: `schedule-${i}-names`, status: "warn", title: `Schedule ${sc.name} names a provider that is not known`, detail: `${unknown.join(", ")} matches no provider, so that part does nothing.`, fix: "Check the spelling against the provider IDs on the dashboard." })
@@ -141,13 +150,13 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
     if (!fed) add({ id: "pace", status: "warn", title: "The pace guard has nothing to measure", detail: "It works from the usage checks, and none is on.", fix: "Turn on claude.usageProbe or copilot.usageProbe, or sign in to OpenAI with ChatGPT." })
     else add({ id: "pace", status: "ok", title: "The pace guard is on", detail: `Subagents${config.pace.lightAgents.length ? ` and ${config.pace.lightAgents.join(", ")}` : ""} pass over a plan that is on pace to run out before it resets.` })
   }
-  for (const f of core.forecasts(now)) if (f.beforeReset) add({ id: `pace-${f.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, status: "info", title: `${f.label} is on pace to run out before it resets`, detail: `At ${Math.round(f.pct)}% and rising ${f.ratePerHour.toFixed(1)} points an hour: it reaches ${Math.round(f.limitPct)}% around ${new Date(f.runsOutAt).toLocaleString()}${f.resetAt ? `, and resets ${new Date(f.resetAt).toLocaleString()}` : ""}.`, fix: config.pace.enabled ? undefined : "/router pace on keeps subagents off it until it resets." })
+  for (const f of core.forecasts(now)) if (f.beforeReset) add({ id: `pace-${f.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, status: "info", title: `${f.label} is on pace to run out before it resets`, detail: `At ${Math.round(f.pct)}% and rising ${f.ratePerHour.toFixed(1)} points an hour: it reaches ${Math.round(f.limitPct)}% around ${when(f.runsOutAt, now)}${f.resetAt ? `, and resets ${when(f.resetAt, now)}` : ""}.`, fix: config.pace.enabled ? undefined : "/router pace on keeps subagents off it until it resets." })
 
   // Agents with their own chain
   for (const [agent, chain] of Object.entries(config.agents)) add({ id: `agent-${agent}`, status: "info", title: `The ${agent} agent uses the ${chain} chain`, detail: "Its sessions prefer that chain's first entry, unless you pick a model in the session." })
 
   // Providers set aside
-  for (const [id, until] of Object.entries(core.saved(now))) add({ id: `saved-${id}`, status: "info", title: `${id} is saved for later`, detail: `Routing passes it over until ${new Date(until).toLocaleString()}.`, fix: `/router save ${id} off ends it early.` })
+  for (const [id, until] of Object.entries(core.saved(now))) add({ id: `saved-${id}`, status: "info", title: `${id} is saved for later`, detail: `Routing passes it over until ${when(until, now)}.`, fix: `/router save ${id} off ends it early.` })
 
   // Notifications
   const nf = config.notifications
@@ -207,6 +216,19 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
 }
 
 /** The checks as plain text, for the session note and the command line. */
+/**
+ * The note `/router doctor` leaves in the session. The model reads it at the next turn, so it stays short: only what
+ * needs attention, with the full list on the dashboard (or in the note with `full`).
+ */
+export function doctorNote(checks: Check[], opts: { full?: boolean; dashboard?: string } = {}): string {
+  if (opts.full || !opts.dashboard) return `quota-router health check\n${doctorText(checks)}`
+  const attention = checks.filter((c) => c.status === "fail" || c.status === "warn")
+  const rest = checks.length - attention.length
+  const where = `The full list is on the dashboard (${opts.dashboard}/#doctor); /router doctor full puts it here.`
+  if (!attention.length) return `quota-router health check: all ${checks.length} checks are fine. ${where}`
+  return `quota-router health check: ${attention.length} ${attention.length === 1 ? "item needs" : "items need"} attention, ${rest} fine.\n${doctorText(attention)}\n${where}`
+}
+
 export function doctorText(checks: Check[]): string {
   const mark = { ok: "✓", warn: "!", fail: "✗", info: "·" }
   return checks.map((c) => `${mark[c.status]} ${c.title}${c.detail ? ` (${c.detail})` : ""}${c.fix && c.status !== "ok" ? `\n    → ${c.fix}` : ""}`).join("\n")

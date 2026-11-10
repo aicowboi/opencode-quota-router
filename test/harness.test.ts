@@ -484,7 +484,7 @@ test("dry run records what routing would do and changes nothing", async () => {
 })
 
 test("doctor reports the setup without touching credentials", async () => {
-  const { runDoctor, doctorText } = await import("../src/doctor.ts")
+  const { runDoctor, doctorText, doctorNote, when } = await import("../src/doctor.ts")
   const by = () => Object.fromEntries(runDoctor(core).map((c: any) => [c.id, c]))
   let c = by()
   assert.equal(c.routing.status, "ok")
@@ -507,6 +507,24 @@ test("doctor reports the setup without touching credentials", async () => {
   assert.equal(c["chain-opus"].status, "warn")
   assert.equal(c["pool-xai"].detail, "weekly limit")
   assert.match(doctorText(Object.values(c) as any), /! Chain opus: no fallback/)
+  // The note left in the session keeps to what needs attention; the rest is on the dashboard, or in the note with "full".
+  const all = Object.values(c) as any[]
+  const note = doctorNote(all, { dashboard: "http://127.0.0.1:47321" })
+  const attention = all.filter((x) => x.status === "warn" || x.status === "fail")
+  assert.ok(attention.length > 0)
+  assert.equal(note.split("\n").length, attention.length + 2 + attention.filter((x) => x.fix).length)
+  assert.match(note, /items? needs? attention/)
+  assert.match(note, /! Chain opus: no fallback/)
+  assert.doesNotMatch(note, /✓ /)
+  assert.match(note, /http:\/\/127\.0\.0\.1:47321\/#doctor/)
+  assert.match(doctorNote(all, { full: true, dashboard: "x" }), /^quota-router health check\n/)
+  assert.match(doctorNote(all, {}), /✓ /) // without a dashboard, the whole list
+  assert.match(doctorNote(all.filter((x) => x.status === "ok"), { dashboard: "x" }), /^quota-router health check: all \d+ checks are fine\./)
+  // Times are short: today's as a time, this week's with the day.
+  const noon = new Date(2026, 10, 10, 12, 0).getTime()
+  assert.equal(when(new Date(2026, 10, 10, 15, 10).getTime(), noon), new Date(2026, 10, 10, 15, 10).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
+  assert.match(when(new Date(2026, 10, 13, 9, 0).getTime(), noon), /^\S+ \d/)
+  assert.doesNotMatch(when(new Date(2026, 10, 13, 9, 0).getTime(), noon), /2026/)
 
   core.paused = false
   core.pools.reset("xai", "test")

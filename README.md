@@ -269,7 +269,7 @@ Sessions move at their next turn after a schedule starts or ends, never in the m
 | `/router agent <name> <chain>` | Run one agent's sessions on a chain, for example `/router agent plan sonnet`. `/router agent <name> off` ends it, `/router agent` lists them |
 | `/router pace on` / `off` | Turn the pace guard on or off: subagents pass over a plan that is on pace to run out before it resets |
 | `/router advice` | Plan advice: whether each subscription fits how you used it over the last 30 days |
-| `/router doctor` | Run the health check and open it on the dashboard |
+| `/router doctor` | Run the health check and open it on the dashboard. The note left in the session lists only what needs attention; `/router doctor full` puts the whole list there |
 | `/router telemetry on` / `off` | Turn the OpenTelemetry export on or off (the endpoint comes from `opencode.jsonc` or `OTEL_*`) |
 
 Commands that change a setting store it in the plugin's own database, on top of your `opencode.jsonc`, which is never written to.
