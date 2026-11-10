@@ -1,4 +1,5 @@
 // quota-router: quota-aware provider routing for OpenCode V2, with a local usage dashboard.
+import { describeSchedule } from "./engine/schedule.ts"
 import { ruledOut } from "./engine/rules.ts"
 import { adviceText, planAdvice } from "./advisor.ts"
 import { parseUntil } from "./engine/policy.ts"
@@ -109,6 +110,7 @@ function statusText(core: Core, sessionID: string): string {
     lines.push(`This session: ${s.current ? refLabel(s.current) : "?"} (preferred ${refLabel(s.preferred.model)}, chain ${s.preferred.chain}${s.byAgent ? (s.byProject ? " from this project's settings" : ` from the ${s.agent} agent`) : ""}${s.pinned ? ", pinned" : ""})`)
     lines.push(`Chain: ${orderedChain(core.config, s.preferred.chain).map(refLabel).join(" → ")}`)
   } else lines.push("This session's model is in no chain, so it is not routed.")
+  for (const sc of core.schedules()) lines.push(`Schedule ${sc.name} applies${sc.until ? ` until ${new Date(sc.until).toLocaleString()}` : ""}: ${describeSchedule(sc)}`)
   const rules = s ? core.rulesFor(s) : undefined
   if (rules) {
     const parts = [rules.deny.length ? `no ${rules.deny.join(", ")}` : "", rules.denyKinds.length ? `no ${rules.denyKinds.join(" or ")} providers` : "", rules.allow ? `only ${rules.allow.join(", ") || "nothing"}` : "", rules.chain ? `chain ${rules.chain}` : ""].filter(Boolean)

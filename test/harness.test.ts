@@ -797,6 +797,38 @@ test("project rules: a project's file shuts a provider out, and your settings gi
   fs.rmSync(proj, { recursive: true, force: true })
 })
 
+test("schedules: a schedule puts a provider first or shuts one out while it applies", async () => {
+  const base = { claude: { usageProbe: false }, copilot: { usageProbe: false }, backfill: false, dashboard: { enabled: false } }
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  const sid = "ses_sched"
+  harness.sessionModels.set(sid, opus)
+  await onEvent(core, evt("session.created", { sessionID: sid, model: opus }))
+  const s = core.session(sid)
+
+  // No times given: it applies now, whenever the test runs.
+  core.setOptions({ ...base, schedules: [{ name: "nights", first: ["xai"] }] })
+  assert.deepEqual(core.warnings, [])
+  await onPrompt(core, { sessionID: sid })
+  await flush()
+  assert.deepEqual(harness.calls.switches.at(-1), { sessionID: sid, model: { providerID: "xai", id: "grok-4.7", variant: "high" } })
+  const row: any = core.store.get("SELECT trigger, evidence FROM routing WHERE session_id = ? ORDER BY rowid DESC LIMIT 1", sid)
+  assert.deepEqual({ ...row }, { trigger: "preempt", evidence: "The nights schedule puts xai first" })
+  assert.equal(s.preferred.model.providerID, "claude-agent", "the session's own choice is kept for when the schedule ends")
+
+  // The schedule now shuts xAI out instead: the session leaves it.
+  core.setOptions({ ...base, schedules: [{ name: "nights", deny: ["xai"] }] })
+  s.movedAt = 0
+  await onPrompt(core, { sessionID: sid })
+  await flush()
+  assert.equal(harness.calls.switches.at(-1).model.providerID, "claude-agent")
+
+  core.setOptions(base)
+  assert.deepEqual(core.config.schedules, [])
+  core.sessions.delete(sid)
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+})
+
 test("pace guard: a subagent leaves a plan that is on pace to run out, and the main session stays", async () => {
   const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
   const now = Date.now()

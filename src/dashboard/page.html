@@ -360,6 +360,7 @@ function renderMast() {
   if (s.dryRun) parts.push("<b>Dry run.</b> Routing decisions are recorded below but no session is moved.")
   if (s.paused) parts.push("<b>Routing is paused.</b> Sessions stay on whatever model they are on.")
   else if (topLimited) parts.push("<b>" + esc(pname(top.id)) + "</b> is limited until " + esc(fmtWhen(topLimited.until)) + (nextFree ? ", so requests go to <b>" + esc(pname(nextFree.id)) + "</b>." : ", and so is everything below it."))
+  for (const sc of (s.schedules || []).filter((x) => x.active)) parts.push("<b>Schedule " + esc(sc.name) + "</b> applies" + (sc.until ? " until " + esc(fmtWhen(sc.until)) : "") + ": " + esc(sc.does) + ".")
   const servers = Object.entries(serving)
   if (servers.length) parts.push(servers.map(([p, k]) => "<b>" + esc(pname(p)) + "</b> is serving " + k + " " + plural(k, "session")).join("; ") + ".")
   else if (!topLimited) parts.push("Nothing is running.")

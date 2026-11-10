@@ -11,7 +11,7 @@ export const EFFORT = ["none", "minimal", "low", "medium", "high", "xhigh", "max
 export type Preferred = { chain: string; index: number; variant?: string }
 
 export type RouteResult =
-  | { target: ModelRef; index: number; usable: "yes" | "trial"; skipped: string[] }
+  | { target: ModelRef; index: number; usable: "yes" | "trial"; skipped: string[]; /** The schedule that put the target first, if one did. */ schedule?: string }
   | { target: undefined; earliest?: number; next?: ModelRef; skipped: string[] }
 
 /** Chain entries ordered by provider priority. A stable sort keeps the configured order within a provider. */
@@ -104,12 +104,16 @@ export function route(input: {
   gate?: Gate
   /** Time to first token per entry, where known. Only decides between providers given the same priority. */
   speed?: (entry: ModelRef) => number | undefined
+  /** Entries a schedule puts ahead of the rest of the chain: returns the schedule's name for those. */
+  first?: (entry: ModelRef) => string | undefined
 }): RouteResult {
   const { config, pools, models, preferred } = input
   const chain = orderedChain(config, preferred.chain)
   // The model the user picked sets the chain and the effort level; priority order always decides the provider.
   const baseline = chain[preferred.index]
-  const order = fasterFirst(config, chain, input.speed)
+  let order = fasterFirst(config, chain, input.speed)
+  const first = input.first
+  if (first) order = [...order.filter((i) => first(chain[i])), ...order.filter((i) => !first(chain[i]))]
   const skipped: string[] = []
   let trial: { target: ModelRef; index: number } | undefined
   let reluctant: { target: ModelRef; index: number; usable: "yes" | "trial"; line: string } | undefined
@@ -160,7 +164,7 @@ export function route(input: {
       reluctant ??= { target, index, usable, line }
       continue
     }
-    if (usable === "yes" || input.mode === "turn") return { target, index, usable, skipped }
+    if (usable === "yes" || input.mode === "turn") return { target, index, usable, skipped, schedule: first?.(entry) }
     trial ??= { target, index }
   }
   if (trial) return { ...trial, usable: "trial", skipped }

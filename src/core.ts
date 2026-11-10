@@ -14,6 +14,7 @@ import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsa
 import { fetchCopilotUser, findGithubToken, interpretCopilot, type CopilotQuota } from "./probes/copilot.ts"
 import { fetchLocal, LOCAL_NAMES, type LocalHealth, type LocalKind } from "./probes/local.ts"
 import { healthGate, speedOf, summariseHealth, type ProviderHealth } from "./engine/health.ts"
+import { activeSchedules, scheduleFirst, scheduleGate, type ActiveSchedule } from "./engine/schedule.ts"
 import { combineRules, matchProject, parseRules, rulesGate, type Rules } from "./engine/rules.ts"
 import { learnPool, type LearnedPool, type PoolSpend } from "./engine/learn.ts"
 import { fetchOpenRouterKey, findOpenRouterKey, interpretOpenRouter, type OpenRouterCredit } from "./probes/openrouter.ts"
@@ -237,6 +238,7 @@ export class Core {
     () => downGate(this.localDown()),
     () => healthGate(this.config, this.health()),
     (s) => (s ? rulesGate(this.config, this.rulesFor(s)) : undefined),
+    () => scheduleGate(this.config, this.schedules()),
     () => economyGate(this.config, this.copilot.data && this.copilot.data.entitlement > 0 ? (this.copilot.data.used / this.copilot.data.entitlement) * 100 : undefined, this.models),
     (s) => (this.config.pace.enabled && s && this.isLight(s) ? paceGate(this.config, this.forecasts(), true, Date.now()) : undefined),
   ]
@@ -246,7 +248,17 @@ export class Core {
     return Boolean(s.parentID) || (s.agent !== undefined && this.config.pace.lightAgents.includes(s.agent))
   }
 
-  private ruleFiles = new Map<string, { at: number; rules?: Rules; warnings: string[] }>()
+  /** The schedules that apply right now. */
+  schedules(now = Date.now()): ActiveSchedule[] {
+    return this.config.schedules.length ? activeSchedules(this.config.schedules, now) : []
+  }
+
+  /** For `route`: the entries a schedule puts first right now. */
+  first() {
+    return scheduleFirst(this.config, this.schedules())
+  }
+
+  ruleFiles = new Map<string, { at: number; rules?: Rules; warnings: string[] }>()
 
   directoryOf(s: SessionState): string | undefined {
     if (s.directory === undefined) s.directory = this.store.get<{ directory: string | null }>("SELECT directory FROM sessions WHERE id = ?", s.id)?.directory ?? undefined

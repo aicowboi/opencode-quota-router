@@ -1,5 +1,6 @@
 // A health check of the whole setup: what is connected, what would be used, and what is likely to go wrong.
 // Read-only. Nothing here reads a credential, and paths are shown relative to the home directory.
+import { describeSchedule, describeWhen } from "./engine/schedule.ts"
 import { ruledOut } from "./engine/rules.ts"
 import { unreliable } from "./engine/health.ts"
 import { LOCAL_NAMES, localNote } from "./probes/local.ts"
@@ -87,6 +88,14 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   probe("probe-claude", "Claude", config.claude.usageProbe, core.hasProvider("claude-agent"), core.claude, "claude.usageProbe")
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
   probe("probe-openrouter", "OpenRouter", config.openrouter.usageProbe, core.hasProvider("openrouter"), core.openrouter, "openrouter.usageProbe")
+  const activeNow = core.schedules(now)
+  for (const [i, sc] of config.schedules.entries()) {
+    const on = activeNow.find((a) => a.name === sc.name)
+    add({ id: `schedule-${i}`, status: "info", title: `Schedule ${sc.name}: ${on ? `applies now${on.until ? ` until ${new Date(on.until).toLocaleString()}` : ""}` : "not now"}`, detail: `${describeWhen(sc)} · ${describeSchedule(sc)}` })
+    const known = new Set([...Object.keys(config.providers), "subscription", "metered", "local"])
+    const unknown = [...sc.deny, ...(sc.allow ?? []), ...sc.first].filter((x) => !known.has(x))
+    if (unknown.length) add({ id: `schedule-${i}-names`, status: "warn", title: `Schedule ${sc.name} names a provider that is not known`, detail: `${unknown.join(", ")} matches no provider, so that part does nothing.`, fix: "Check the spelling against the provider IDs on the dashboard." })
+  }
   // Project rules, for the projects with a session open
   const seenDirs = new Set<string>()
   for (const s of core.sessions.values()) {

@@ -1,4 +1,5 @@
 import { parseRules, type Rules } from "./rules.ts"
+import { parseSchedules, type Schedule } from "./schedule.ts"
 import type { ModelRef, ProviderKind } from "./types.ts"
 
 export type ProviderConfig = {
@@ -35,6 +36,8 @@ export type Config = {
   agents: Record<string, string>
   /** Rules per project directory: providers shut out, and the chain its sessions use. */
   projects: Record<string, Rules>
+  /** Rules that apply at certain times of the day or week. */
+  schedules: Schedule[]
   recovery: { skewMs: number }
   throttle: { maxWaitMs: number; inPlaceRetries: number; cooldownMs: number; maxCooldownMs: number }
   /**
@@ -202,6 +205,7 @@ export const DEFAULTS: Config = {
   chains: Object.fromEntries(Object.entries(DEFAULT_CHAINS).map(([k, v]) => [k, v.map(parseRef)])),
   agents: {},
   projects: {},
+  schedules: [],
   recovery: { skewMs: 60_000 },
   throttle: { maxWaitMs: 20_000, inPlaceRetries: 2, cooldownMs: 60_000, maxCooldownMs: 10 * 60_000 },
   switching: { minStayMs: 3 * 60_000, largeContextTokens: 100_000, largeContextMaxWaitMs: 60_000 },
@@ -318,6 +322,8 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
   const rawAgents = opts.agents
   const rawProjects = opts.projects
   delete opts.projects
+  const rawSchedules = opts.schedules
+  delete opts.schedules
   delete opts.chains
   delete opts.agents
   delete opts.providers
@@ -449,5 +455,9 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
       if (parsed.rules) config.projects[dir] = { ...parsed.rules, source: "your settings" }
     }
   } else if (rawProjects !== undefined) warnings.push("projects should be an object of directory: rules; ignored")
+
+  const parsedSchedules = parseSchedules(rawSchedules)
+  config.schedules = parsedSchedules.schedules
+  warnings.push(...parsedSchedules.warnings)
   return { config, warnings }
 }

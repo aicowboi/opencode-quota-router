@@ -12,6 +12,7 @@ import { fasterFirst, findInChains, mapVariant, orderedChain, route } from "../s
 import { costOf, estimate } from "../src/engine/pricing.ts"
 import { healthGate, speedOf, summariseHealth, unreliable } from "../src/engine/health.ts"
 import { combineRules, matchProject, parseRules, ruledOut, rulesGate } from "../src/engine/rules.ts"
+import { activeSchedules, describeSchedule, describeWhen, parseClock, parseSchedules, scheduleFirst, scheduleGate } from "../src/engine/schedule.ts"
 import { learnPool } from "../src/engine/learn.ts"
 import type { ModelInfo } from "../src/engine/types.ts"
 
@@ -661,4 +662,75 @@ test("project rules: a project can shut providers out; only your own settings ca
   const r = route({ config, pools, models: MODELS, preferred, mode: "turn", gate: rulesGate(config, both) })
   assert.equal(r.target, undefined)
   assert.ok(r.skipped.some((line) => /xai\/grok-4.7: xai is not allowed in this project/.test(line)))
+})
+
+test("schedules: rules that apply at certain times, in local time", () => {
+  // Local time, so the test reads the same in any time zone. 9 November 2026 is a Monday.
+  const at = (day: number, h: number, m = 0) => new Date(2026, 10, day, h, m).getTime()
+  assert.equal(parseClock("18:00"), 1080)
+  assert.equal(parseClock("8:30"), 510)
+  assert.equal(parseClock("24:00"), 0)
+  assert.equal(parseClock("25:00"), undefined)
+  assert.equal(parseClock("18:75"), undefined)
+  assert.equal(parseClock(18), undefined)
+
+  const config = cfg({ schedules: [
+    { name: "evenings", from: "18:00", to: "08:00", first: ["local"] },
+    { name: "weekends", days: "weekends", denyKinds: ["metered"], deny: ["xai"] },
+    { days: ["mon", "Wednesday"], from: "09:00", to: "17:00", allow: ["claude-agent"] },
+  ] })
+  assert.equal(config.schedules.length, 3)
+  assert.equal(config.schedules[2].name, "Mon, Wed 09:00 to 17:00")
+  assert.equal(describeWhen(config.schedules[0]), "18:00 to 08:00")
+  assert.equal(describeWhen(config.schedules[1]), "Sun, Sat")
+  assert.equal(describeSchedule(config.schedules[1]), "no xai; no metered providers")
+  const names = (t: number) => activeSchedules(config.schedules, t).map((s) => s.name)
+  assert.deepEqual(names(at(9, 10)), ["Mon, Wed 09:00 to 17:00"])
+  assert.deepEqual(names(at(9, 17)), [], "the end time is not included")
+  assert.deepEqual(names(at(9, 19)), ["evenings"])
+  assert.deepEqual(names(at(10, 7, 59)), ["evenings"], "past midnight")
+  assert.deepEqual(names(at(10, 8)), [])
+  assert.deepEqual(names(at(14, 12)), ["weekends"])
+
+  // When each stops applying: an overnight stretch the next morning, a weekend at Monday midnight.
+  assert.equal(activeSchedules(config.schedules, at(9, 19))[0].until, at(10, 8))
+  assert.equal(activeSchedules(config.schedules, at(10, 3))[0].until, at(10, 8))
+  assert.equal(activeSchedules(config.schedules, at(14, 12))[0].until, at(16, 0))
+  assert.equal(activeSchedules(parseSchedules([{ deny: ["xai"] }]).schedules, at(9, 10))[0].until, undefined, "always on")
+  // An overnight stretch belongs to the day it starts on: Friday night runs into Saturday morning.
+  const fri = parseSchedules([{ days: ["fri"], from: "22:00", to: "06:00", first: ["ollama"] }]).schedules
+  assert.equal(activeSchedules(fri, at(14, 5)).length, 1)
+  assert.equal(activeSchedules(fri, at(14, 23)).length, 0)
+  assert.equal(activeSchedules(fri, at(13, 23)).length, 1)
+
+  // Bad entries are dropped with a warning, and the rest still load.
+  const bad = parseSchedules([{ from: "18:00", first: ["local"] }, { days: ["someday"], deny: ["xai"] }, { name: "empty" }, { from: "6pm", to: "08:00", deny: ["xai"] }, { deny: ["xai"], denyKinds: ["free"], colour: "red" }, "nope"])
+  assert.equal(bad.schedules.length, 1)
+  assert.equal(bad.warnings.length, 7)
+  assert.deepEqual(parseSchedules({}).warnings, ["schedules should be a list; ignored"])
+  assert.deepEqual(parseSchedules(undefined), { schedules: [], warnings: [] })
+
+  // The gate: at the weekend metered providers and xAI are out; on Monday in working hours, only Claude.
+  const weekend = scheduleGate(config, activeSchedules(config.schedules, at(14, 12)))
+  assert.match(weekend?.({ providerID: "anthropic", id: "claude-opus-5-5" })?.reason ?? "", /the weekends schedule shuts metered providers out until 00:00/)
+  assert.equal(weekend?.({ providerID: "xai", id: "grok-4.7" })?.until, at(16, 0))
+  assert.equal(weekend?.({ providerID: "claude-agent", id: "opus" }), undefined)
+  const working = scheduleGate(config, activeSchedules(config.schedules, at(9, 10)))
+  assert.match(working?.({ providerID: "xai", id: "grok-4.7" })?.reason ?? "", /allows only claude-agent until 17:00/)
+  assert.equal(scheduleGate(config, activeSchedules(config.schedules, at(9, 19))), undefined, "a schedule that only reorders shuts nothing out")
+  assert.equal(scheduleFirst(config, []), undefined)
+
+  // First: in the evening the named provider is tried before the rest of the chain, and the chain's order returns after.
+  const evening = cfg({ schedules: [{ name: "evenings", from: "18:00", to: "08:00", first: ["xai"] }] })
+  const pools = new PoolStore(evening, () => NOW)
+  const preferred = { ...findInChains(evening, { providerID: "claude-agent", id: "opus" })!, variant: "medium" }
+  const day = route({ config: evening, pools, models: MODELS, preferred, mode: "turn", first: scheduleFirst(evening, activeSchedules(evening.schedules, at(9, 12))) })
+  assert.equal(day.target?.providerID, "claude-agent")
+  const night = route({ config: evening, pools, models: MODELS, preferred, mode: "turn", first: scheduleFirst(evening, activeSchedules(evening.schedules, at(9, 20))) })
+  assert.equal(night.target?.providerID, "xai")
+  assert.equal(night.target && "schedule" in night ? night.schedule : undefined, "evenings")
+  assert.equal(night.target?.variant, "high", "effort still maps from the model the session prefers")
+  // A limit on the provider put first still falls through to the rest of the chain.
+  pools.report({ kind: "window", pools: ["xai"], evidence: "limit", resetAt: NOW + 3_600_000 })
+  assert.equal(route({ config: evening, pools, models: MODELS, preferred, mode: "turn", first: scheduleFirst(evening, activeSchedules(evening.schedules, at(9, 20))) }).target?.providerID, "claude-agent")
 })

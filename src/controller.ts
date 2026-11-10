@@ -59,7 +59,7 @@ async function decideRetry(core: Core, e: RetryEvent) {
     return
   }
   await core.refreshModels()
-  const r = route({ config: core.config, pools: core.pools, models: core.models, preferred: s.preferred, lastInputTokens: s.lastInputTokens, gate: core.gate(s), speed: core.speed(), mode: "failover", exclude: new Set(signal.pools) })
+  const r = route({ config: core.config, pools: core.pools, models: core.models, preferred: s.preferred, lastInputTokens: s.lastInputTokens, gate: core.gate(s), speed: core.speed(), first: core.first(), mode: "failover", exclude: new Set(signal.pools) })
   if (r.target) {
     try {
       await core.switchTo(s, r.target, "failover", signal)
@@ -94,11 +94,12 @@ export async function onPrompt(core: Core, e: { sessionID: string; metadata?: Re
   await core.refreshModels()
   const providers = [...new Set(orderedChain(core.config, s.preferred.chain).map((r) => r.providerID))]
   await core.freshUsage(providers)
-  const r = route({ config: core.config, pools: core.pools, models: core.models, preferred: s.preferred, lastInputTokens: s.lastInputTokens, gate: core.gate(s), speed: core.speed(), mode: "turn" })
+  const r = route({ config: core.config, pools: core.pools, models: core.models, preferred: s.preferred, lastInputTokens: s.lastInputTokens, gate: core.gate(s), speed: core.speed(), first: core.first(), mode: "turn" })
   if (!r.target || same(r.target, s.current)) return
   const chain = orderedChain(core.config, s.preferred.chain)
   const currentIndex = s.current ? chain.findIndex((c) => c.providerID === s.current!.providerID && c.id === s.current!.id) : -1
-  const trigger = currentIndex !== -1 && r.index < currentIndex ? "recovery" : currentIndex === -1 ? "route" : "preempt"
+  // A target that a schedule put first is the schedule's doing, whatever its place in the chain.
+  const trigger = currentIndex !== -1 && r.index < currentIndex && !r.schedule ? "recovery" : currentIndex === -1 ? "route" : "preempt"
   // Each move sends the whole context again, so a session that has just been moved stays put for a few minutes.
   if (trigger === "recovery" && s.movedAt && Date.now() - s.movedAt < core.config.switching.minStayMs && core.canStay(s)) return
   const evidence =
@@ -106,13 +107,15 @@ export async function onPrompt(core: Core, e: { sessionID: string; metadata?: Re
       ? r.usable === "trial"
         ? `Trying ${refLabel(r.target)} again after its cooldown`
         : `${refLabel(r.target)} is available again`
-      : r.skipped.length
-        ? r.skipped.join("; ")
-        : s.byAgent && trigger === "route"
-          ? s.byProject
-            ? `This project uses the ${s.preferred.chain} chain`
-            : `The ${s.agent} agent uses the ${s.preferred.chain} chain`
-          : undefined
+      : r.schedule
+        ? [`The ${r.schedule} schedule puts ${r.target.providerID} first`, ...r.skipped].join("; ")
+        : r.skipped.length
+          ? r.skipped.join("; ")
+          : s.byAgent && trigger === "route"
+            ? s.byProject
+              ? `This project uses the ${s.preferred.chain} chain`
+              : `The ${s.agent} agent uses the ${s.preferred.chain} chain`
+            : undefined
   if (core.config.dryRun) {
     const key = `${trigger} ${refLabel(r.target)}`
     if (s.dryLast === key) return
@@ -219,7 +222,7 @@ async function resumeAfterFailure(core: Core, ev: { id: string; data: Record<str
     core.recordRouting({ sessionID: sid, trigger: "gave-up", signal, evidence: "Three automatic continuations in the last hour; leaving the session for you" })
     return
   }
-  const r = route({ config: core.config, pools: core.pools, models: core.models, preferred: s.preferred, lastInputTokens: s.lastInputTokens, gate: core.gate(s), speed: core.speed(), mode: "failover", exclude: new Set(signal.pools) })
+  const r = route({ config: core.config, pools: core.pools, models: core.models, preferred: s.preferred, lastInputTokens: s.lastInputTokens, gate: core.gate(s), speed: core.speed(), first: core.first(), mode: "failover", exclude: new Set(signal.pools) })
   if (r.target) return continueOn(core, s, r.target, ev.id, signal.evidence)
   if (core.config.onExhausted.mode !== "wait" || !r.earliest || !r.next) {
     core.recordRouting({ sessionID: sid, trigger: "exhausted", signal, evidence: `All providers limited: ${r.skipped.join("; ")}` })

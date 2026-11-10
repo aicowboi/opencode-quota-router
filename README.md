@@ -196,6 +196,21 @@ A repository can also carry its own rules in `.opencode/quota-router.json` (`{ "
 
 A provider the rules shut out is never routed to, even when it is the only one left; the session then waits like it does when everything is limited. This is a routing rule, not a security control: quota-router cannot stop you picking a model by hand, and it leaves pinned sessions and models outside every chain where they are. `/router status` and `/router doctor` say when a session is on a provider its project shuts out.
 
+**Want different rules in the evening or at the weekend?** Schedules apply a rule at certain times, in your machine's time zone:
+
+```jsonc
+"schedules": [
+  { "name": "evenings", "from": "18:00", "to": "08:00", "first": ["local"] },
+  { "name": "weekends", "days": ["sat", "sun"], "denyKinds": ["metered"] }
+]
+```
+
+- `first` lists providers, or kinds of provider (`subscription`, `metered`, `local`), tried before the rest of the chain while the schedule applies. If they are limited or not running, the chain carries on as usual.
+- `deny`, `denyKinds` and `allow` shut providers out while it applies, in the same way as project rules.
+- `days` takes day names, `"weekdays"` or `"weekends"`; leave it out for every day. `from` and `to` are 24-hour times; leave both out for the whole day. A `from` later than `to` runs past midnight and belongs to the day it starts on.
+
+Sessions move at their next turn after a schedule starts or ends, never in the middle of one. The dashboard's headline, `/router status` and `/router doctor` say which schedules apply now and until when.
+
 **Want subagents to stop draining a plan that is running low?** With a usage check on, the dashboard says when a plan window is on pace to run out before it resets, for example "5-hour session on pace to run out at 15:40 · resets 17:00". The pace is measured over the recent part of the window (the last hour of a 5-hour window, about a day and a half of a weekly one). Turn on the pace guard with `/router pace on` or `"pace": { "enabled": true }`, and subagent sessions, plus any agents you list in `pace.lightAgents`, are routed to the next provider in their chain while that forecast stands, so what is left of the plan goes to your main session. It is a preference, not a rule: if nothing else in the chain can run, the subagent still uses the plan.
 
 **Is my plan the right size?** `/router advice`, or "Plan advice" on the dashboard, looks at the last 30 days on this machine: how often each subscription was limited and for how long, the busiest week the usage checks recorded, and what pay-per-use providers cost in that time. It says when a larger plan would have cost less than the fallback spend, and when the busiest week would have fitted in the plan below. It needs at least a week of recorded use, and the usage checks (step 4) for the peak figures and for the Claude plan, which is read from Claude Code's login (Pro, Max, Ultra, Team seats, Enterprise). Prices are list prices built into the plugin; they change, so check the provider's page before deciding, and correct them with `advisor.prices`. Nothing is sent anywhere.
@@ -275,6 +290,7 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `local.ollamaUrl` / `lmstudioUrl` | `http://127.0.0.1:11434` / `http://127.0.0.1:1234` | Where those servers listen. Only settable in `opencode.jsonc` |
 | `copilot.monthlyCredits` | 0 (plan default) | Your included credits on a pooled Business or Enterprise seat |
 | `projects.<directory>` | none | Rules for sessions in that directory: `deny`, `allow`, `denyKinds` and `chain` (see "How routing works"). `~` is your home directory |
+| `schedules` | none | A list of rules that apply at certain times: `name`, `days`, `from`, `to`, and `first`, `deny`, `denyKinds` or `allow` (see "How routing works") |
 | `pace.enabled` | false | Pace guard: subagents pass over a plan that is on pace to run out before it resets. Needs a usage check (step 4) or a ChatGPT sign-in |
 | `pace.lightAgents` | none | Agents whose sessions are treated like subagents by the pace guard, for example `["explore"]` |
 | `spend.dailyUsd` / `monthlyUsd` | 0 (no cap) | Most that pay-per-use providers may cost in a local day or month, in US dollars |

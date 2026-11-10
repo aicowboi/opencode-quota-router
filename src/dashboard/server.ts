@@ -1,5 +1,6 @@
 // Local-only dashboard server. Binds to 127.0.0.1, checks the Host header (DNS rebinding) and requires a
 // custom header on actions (cross-site requests cannot send one without a preflight we never allow).
+import { describeSchedule, describeWhen } from "../engine/schedule.ts"
 import { unreliable } from "../engine/health.ts"
 import { localNote } from "../probes/local.ts"
 import http from "node:http"
@@ -101,6 +102,10 @@ export function buildState(core: Core) {
     paused: core.paused,
     enabled: core.config.enabled,
     dryRun: core.config.dryRun,
+    schedules: (() => {
+      const active = core.schedules(now)
+      return core.config.schedules.map((s) => ({ name: s.name, when: describeWhen(s), does: describeSchedule(s), active: active.some((a) => a.name === s.name), until: active.find((a) => a.name === s.name)?.until }))
+    })(),
     providers,
     plans: { claude: core.hasProvider("claude-agent") ? claudePlan(core.config.claude.plan || core.claude.plan?.type, core.claude.plan?.tier)?.name : undefined },
     claude: { ok: core.claude.ok, at: core.claude.at, message: core.claude.message, data: core.claude.data, enabled: core.config.claude.usageProbe, cutoverAtPct: core.config.claude.cutoverAtPct },
