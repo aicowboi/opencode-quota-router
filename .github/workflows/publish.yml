@@ -37,4 +37,13 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: test "v$(node -p 'require("./package.json").version')" = "$TAG"
-      - run: npm publish --provenance --access public
+      # A version already on npm (for example the first release, published by hand before trusted publishing could be
+      # set up) is left alone, so the release still goes green.
+      - name: Publish unless this version is already on npm
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          if [ "$(npm view "opencode-quota-router@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "::notice::opencode-quota-router@$VERSION is already on npm; nothing to publish."
+          else
+            npm publish --provenance --access public
+          fi
