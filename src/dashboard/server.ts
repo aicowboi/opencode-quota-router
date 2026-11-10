@@ -103,6 +103,7 @@ export function buildState(core: Core) {
     plans: { claude: core.hasProvider("claude-agent") ? claudePlan(core.config.claude.plan || core.claude.plan?.type, core.claude.plan?.tier)?.name : undefined },
     claude: { ok: core.claude.ok, at: core.claude.at, message: core.claude.message, data: core.claude.data, enabled: core.config.claude.usageProbe, cutoverAtPct: core.config.claude.cutoverAtPct },
     copilot: { ok: core.copilot.ok, at: core.copilot.at, message: core.copilot.message, data: core.copilot.data, enabled: core.config.copilot.usageProbe, reserveFraction: core.config.copilot.reserveFraction, economyAtPct: core.config.copilot.economyAtPct, byModel: core.copilot.data ? q.copilotCredits(core.store, Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1)) : [] },
+    openrouter: { ok: core.openrouter.ok, at: core.openrouter.at, message: core.openrouter.message, data: core.openrouter.data, enabled: core.config.openrouter.usageProbe },
     chatgpt: { active: core.chatgptActive(), at: core.chatgpt.at, data: core.chatgpt.data, cutoverAtPct: core.config.chatgpt.cutoverAtPct },
     saved: core.saved(now),
     spend: { ...core.config.spend, ...core.spend(now), blocked: core.spendBlocks(now) },

@@ -205,6 +205,26 @@ test("Copilot probe: cut over at the included allowance", () => {
   core.pools.reset("github-copilot")
 })
 
+test("OpenRouter probe: leave when the key's limit is spent; free models have their own allowance", () => {
+  const now = Date.now()
+  const reset = now + 86_400_000
+  core.applyOpenRouter({ limitUsd: 20, remainingUsd: 6, usedUsd: 14, scope: "key", interval: "monthly", resetAt: reset, freeTier: false, free: { used: 1000, limit: 1000, remaining: 0 } }, now)
+  assert.equal(core.pools.usable("openrouter"), "yes")
+  assert.equal(core.pools.usable("openrouter:free"), "no", "paid models stay usable when the free allowance is gone")
+  core.applyOpenRouter({ limitUsd: 20, remainingUsd: 0, usedUsd: 20.01, scope: "key", interval: "monthly", resetAt: reset, freeTier: false, free: { used: 3, limit: 1000, remaining: 997 } }, now)
+  assert.equal(core.pools.usable("openrouter"), "no")
+  assert.match(core.pools.get("openrouter").evidence ?? "", /key limit spent \(\$0\.00 of \$20\.00 left\)/)
+  assert.equal(core.pools.usable("openrouter:free"), "yes")
+  // Topped up: the next check clears it.
+  core.applyOpenRouter({ limitUsd: 50, remainingUsd: 30, usedUsd: 20, scope: "key", resetAt: reset, freeTier: false }, now)
+  assert.equal(core.pools.usable("openrouter"), "yes")
+  // No limit on the key: nothing to measure, nothing blocked.
+  core.applyOpenRouter({ usedUsd: 3, freeTier: false }, now)
+  assert.equal(core.pools.usable("openrouter"), "yes")
+  core.pools.reset("openrouter")
+  core.pools.reset("openrouter:free")
+})
+
 test("recorder: steps, costs and dashboard queries", async () => {
   const sid = "ses_rec"
   await onEvent(core, evt("session.created", { sessionID: sid, model: { providerID: "claude-agent", id: "opus" }, location: { directory: "/home/user/project" }, title: "Recorder" }))

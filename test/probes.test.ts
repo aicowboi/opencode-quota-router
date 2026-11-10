@@ -2,6 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { interpretClaudeUsage } from "../src/probes/claude.ts"
 import { findGithubToken, interpretCopilot } from "../src/probes/copilot.ts"
+import { findOpenRouterKey, interpretOpenRouter, nextOpenRouterReset } from "../src/probes/openrouter.ts"
 import { headroom } from "../src/engine/headers.ts"
 
 const NOW = Date.parse("2026-11-09T12:00:00Z")
@@ -101,4 +102,43 @@ test("headers: Anthropic and OpenAI headroom", () => {
   assert.equal(o?.remainingPct, 0)
   assert.equal(o?.resetAt, NOW + 360_000)
   assert.equal(headroom(new Headers({ "content-type": "text/plain" }), NOW), undefined)
+})
+
+test("OpenRouter: the key's limit, a budget above it, and the free-model allowance", () => {
+  const iso = (ms: number | undefined) => ms && new Date(ms).toISOString()
+  // NOW is Monday 9 November 2026, 12:00 UTC.
+  assert.equal(iso(nextOpenRouterReset("daily", NOW)), "2026-11-10T00:00:00.000Z")
+  assert.equal(iso(nextOpenRouterReset("weekly", NOW)), "2026-11-16T00:00:00.000Z")
+  assert.equal(iso(nextOpenRouterReset("weekly", Date.parse("2026-11-15T23:00:00Z"))), "2026-11-16T00:00:00.000Z")
+  assert.equal(iso(nextOpenRouterReset("monthly", NOW)), "2026-12-01T00:00:00.000Z")
+  assert.equal(nextOpenRouterReset(undefined, NOW), undefined)
+
+  const key = interpretOpenRouter({ data: { label: "example", limit: 20, limit_reset: "monthly", limit_remaining: 4.5, usage: 61.2, usage_daily: 1.1, usage_monthly: 15.5, is_free_tier: false, free_model_daily_requests: { used: 40, limit: 1000, remaining: 960 } } }, NOW)
+  assert.ok(key)
+  assert.equal(key.limitUsd, 20)
+  assert.equal(key.remainingUsd, 4.5)
+  assert.equal(key.usedUsd, 15.5)
+  assert.equal(key.scope, "key")
+  assert.equal(iso(key.resetAt), "2026-12-01T00:00:00.000Z")
+  assert.deepEqual(key.free, { used: 40, limit: 1000, remaining: 960 })
+  assert.equal("label" in key, false, "the key's label is not kept")
+
+  // A budget set above the key is the one that applies.
+  const budget = interpretOpenRouter({ data: { limit: 100, limit_remaining: 80, usage: 20, effective_budget: { scope: "workspace", limit_usd: 10, spend_usd: 10.02, remaining_usd: 0, reset_interval: "weekly", resets_at: "2026-11-16T00:00:00Z" } } }, NOW)
+  assert.equal(budget?.limitUsd, 10)
+  assert.equal(budget?.remainingUsd, 0)
+  assert.equal(budget?.scope, "workspace")
+  assert.equal(iso(budget?.resetAt), "2026-11-16T00:00:00.000Z")
+
+  const open = interpretOpenRouter({ data: { limit: null, limit_remaining: null, usage: 3.25, is_free_tier: true } }, NOW)
+  assert.equal(open?.limitUsd, undefined)
+  assert.equal(open?.usedUsd, 3.25)
+  assert.equal(open?.freeTier, true)
+  assert.equal(interpretOpenRouter({ error: { code: 401 } }, NOW), undefined)
+
+  const k = ["sk", "or", "v1", "0123456789abcdef"].join("-")
+  assert.equal(findOpenRouterKey({ type: "api", key: k }), k)
+  assert.equal(findOpenRouterKey({ nested: { value: { apiKey: k } } }), k)
+  assert.equal(findOpenRouterKey({ key: "sk-something-else" }), undefined)
+  assert.equal(findOpenRouterKey(undefined), undefined)
 })

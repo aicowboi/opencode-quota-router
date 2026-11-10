@@ -10,6 +10,7 @@ import { PoolStore } from "./engine/pools.ts"
 import { estimate } from "./engine/pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
 import { fetchCopilotUser, findGithubToken, interpretCopilot, type CopilotQuota } from "./probes/copilot.ts"
+import { fetchOpenRouterKey, findOpenRouterKey, interpretOpenRouter, type OpenRouterCredit } from "./probes/openrouter.ts"
 import { markDirty, optimize, prune, refreshSessions, rollupDirty } from "./maintenance.ts"
 import { applyDiscovery, suggest, withAdditions, type ConnectionMethod } from "./engine/discovery.ts"
 import type { CodexWindow } from "./engine/headers.ts"
@@ -71,6 +72,7 @@ export class Core {
   lastActivity = Date.now()
   claude: ProbeStatus<ClaudeUsage> & { lastExtraUsed?: number; plan?: { type?: string; tier?: string } } = { ok: false }
   copilot: ProbeStatus<CopilotQuota> = { ok: false }
+  openrouter: ProbeStatus<OpenRouterCredit> = { ok: false }
   /** ChatGPT plan windows, read from response headers while OpenAI is signed in with ChatGPT. */
   chatgpt: ProbeStatus<{ windows: CodexWindow[] }> = { ok: false }
   /** How each connected provider is signed in. */
@@ -83,7 +85,7 @@ export class Core {
   private pendingKinds = new Set<string>()
   private notifyTimer?: ReturnType<typeof setTimeout>
   private timers: Array<ReturnType<typeof setInterval>> = []
-  private probing = { claude: false, copilot: false }
+  private probing = { claude: false, copilot: false, openrouter: false }
   private lastSnapshot = new Map<string, { json: string; at: number }>()
   private maintaining = false
   shutdown?: () => Promise<void>
@@ -391,7 +393,7 @@ export class Core {
     for (const [id, b] of Object.entries(this.spendBlocks(now))) {
       this.alert({ kind: "spendCap", key: `${id} ${b.until ?? ""}`, title: id === "*" ? "Spend cap reached" : `Spend cap reached for ${id}`, body: `${b.reason}. Routing passes ${id === "*" ? "pay-per-use providers" : id} over until ${new Date(b.until ?? now).toLocaleString()}.` })
     }
-    for (const [name, enabled, status] of [["Claude", this.config.claude.usageProbe, this.claude], ["Copilot", this.config.copilot.usageProbe, this.copilot]] as const) {
+    for (const [name, enabled, status] of [["Claude", this.config.claude.usageProbe, this.claude], ["Copilot", this.config.copilot.usageProbe, this.copilot], ["OpenRouter", this.config.openrouter.usageProbe, this.openrouter]] as const) {
       if (!enabled || !status.at || status.ok) {
         this.failingSince.delete(name)
         continue
@@ -743,6 +745,67 @@ export class Core {
     }
   }
 
+  async probeOpenRouter(force = false) {
+    const cfg = this.config.openrouter
+    if (!cfg.usageProbe || this.probing.openrouter || !this.ctx || !this.hasProvider("openrouter")) return
+    if (!force && this.openrouter.nextAt && Date.now() < this.openrouter.nextAt) return
+    this.probing.openrouter = true
+    const now = Date.now()
+    try {
+      const connection = await this.ctx.integration.connection.active("openrouter")
+      const credential = connection ? await this.ctx.integration.connection.resolve(connection) : undefined
+      const key = findOpenRouterKey(credential) ?? findOpenRouterKey(process.env.OPENROUTER_API_KEY)
+      if (!key) {
+        this.openrouter = { at: now, ok: false, message: "No OpenRouter key in the connection or in OPENROUTER_API_KEY", nextAt: now + 30 * 60_000 }
+        this.log.debug("openrouter credential shape", { keys: credential && typeof credential === "object" ? Object.keys(credential) : typeof credential })
+        return
+      }
+      const res = await fetchOpenRouterKey(key)
+      const credit = res.json ? interpretOpenRouter(res.json, now) : undefined
+      if (!credit) {
+        // The endpoint has its own burst limit; a 429 from it says nothing about the key's credit.
+        this.openrouter = { ...this.openrouter, at: now, ok: false, message: `OpenRouter key endpoint returned HTTP ${res.status}`, nextAt: now + (res.status === 429 ? 5 : 10) * 60_000 }
+        return
+      }
+      this.applyOpenRouter(credit, now)
+      this.snapshot("openrouter", credit, now)
+      this.openrouter = { at: now, ok: true, data: credit, message: credit.limitUsd === undefined ? "This key has no spending limit, so there is nothing to run out of here" : undefined, nextAt: now + 60_000 }
+    } catch (error) {
+      this.openrouter = { ...this.openrouter, at: now, ok: false, message: String(error), nextAt: now + 5 * 60_000 }
+    } finally {
+      this.probing.openrouter = false
+      this.notify("usage")
+    }
+  }
+
+  /** OpenRouter: leave when the key's limit (or the budget above it) is spent, and `:free` models when their daily requests are. */
+  applyOpenRouter(c: OpenRouterCredit, now: number) {
+    const usd = (x: number) => `$${x.toFixed(2)}`
+    if (c.limitUsd !== undefined && c.limitUsd > 0) {
+      const remaining = c.remainingUsd ?? 0
+      const exhausted = remaining <= this.config.openrouter.reserveUsd
+      const what = c.scope && c.scope !== "key" ? `${c.scope} budget` : "key limit"
+      this.pools.usage("openrouter", {
+        utilization: Math.max(0, Math.min(100, 100 - (remaining / c.limitUsd) * 100)),
+        // A limit that never resets stays spent until it is raised; look again in an hour.
+        resetAt: c.resetAt ?? now + 60 * 60_000,
+        exhausted,
+        warn: remaining / c.limitUsd <= 0.15,
+        evidence: exhausted ? `OpenRouter ${what} spent (${usd(Math.max(0, remaining))} of ${usd(c.limitUsd)} left)` : `OpenRouter ${what}: ${usd(remaining)} left`,
+      })
+    }
+    if (c.free) {
+      const d = new Date(now)
+      this.pools.usage("openrouter:free", {
+        utilization: Math.max(0, Math.min(100, (c.free.used / c.free.limit) * 100)),
+        resetAt: Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1),
+        exhausted: c.free.remaining <= 0,
+        warn: c.free.remaining / c.free.limit <= 0.1,
+        evidence: c.free.remaining <= 0 ? `OpenRouter free-model requests used for today (${c.free.limit})` : `OpenRouter free-model requests: ${c.free.remaining} of ${c.free.limit} left today`,
+      })
+    }
+  }
+
   /** ChatGPT plan windows from a response: leave before the tightest one is spent. */
   applyChatgpt(windows: CodexWindow[], now: number) {
     if (!windows.length) return
@@ -781,6 +844,7 @@ export class Core {
     const tasks: Promise<void>[] = []
     if (providers.includes("claude-agent") && (!this.claude.at || Date.now() - this.claude.at > maxAge)) tasks.push(this.probeClaude(true))
     if (providers.includes("github-copilot") && (!this.copilot.at || Date.now() - this.copilot.at > maxAge)) tasks.push(this.probeCopilot(true))
+    if (providers.includes("openrouter") && (!this.openrouter.at || Date.now() - this.openrouter.at > Math.max(maxAge, 2 * 60_000))) tasks.push(this.probeOpenRouter(true))
     if (tasks.length) await Promise.race([Promise.allSettled(tasks), new Promise((r) => setTimeout(r, 2500))])
   }
 
@@ -792,6 +856,7 @@ export class Core {
       if (!this.claude.at || Date.now() - this.claude.at >= interval) void this.probeClaude(true)
       const copilotBusy = [...this.recorder.live.values()].some((e) => e.step?.model?.providerID === "github-copilot")
       if (!this.copilot.at || Date.now() - this.copilot.at >= (copilotBusy ? 60_000 : interval)) void this.probeCopilot(true)
+      if (!this.openrouter.at || Date.now() - this.openrouter.at >= interval) void this.probeOpenRouter(true)
       void this.refreshModels()
       this.maintain()
       this.checkAlerts()

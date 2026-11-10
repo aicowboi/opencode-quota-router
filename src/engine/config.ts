@@ -80,6 +80,12 @@ export type Config = {
      */
     monthlyCredits: number
   }
+  openrouter: {
+    /** Ask OpenRouter how much of this key's spending limit is left, and leave before it is spent. */
+    usageProbe: boolean
+    /** Dollars kept back, to absorb requests already under way. */
+    reserveUsd: number
+  }
   probes: { activeIntervalMs: number; idleIntervalMs: number; maxAgeAtTurnMs: number }
   headers: { observe: string[]; warnRemainingPct: number }
   /** `menubar` shows the macOS menu bar item (OpenCode Desktop only). */
@@ -187,6 +193,7 @@ export const DEFAULTS: Config = {
   pace: { enabled: false, lightAgents: [] },
   claude: { usageProbe: false, avoidUsageCredits: true, cutoverAtPct: 98, warnAtPct: 85, plan: "" },
   copilot: { usageProbe: false, plan: "", avoidAdditionalCredits: true, reserveFraction: 0.01, monthlyCredits: 0, economyAtPct: 0, economyOutputPrice: 15 },
+  openrouter: { usageProbe: false, reserveUsd: 0 },
   probes: { activeIntervalMs: 3 * 60_000, idleIntervalMs: 15 * 60_000, maxAgeAtTurnMs: 60_000 },
   headers: { observe: ["anthropic", "github-copilot"], warnRemainingPct: 5 },
   dashboard: { enabled: true, port: 47321, host: "127.0.0.1", menubar: true },

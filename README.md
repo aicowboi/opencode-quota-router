@@ -143,12 +143,14 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 ```jsonc
 "options": {
   "claude": { "usageProbe": true },
-  "copilot": { "usageProbe": true }
+  "copilot": { "usageProbe": true },
+  "openrouter": { "usageProbe": true }
 }
 ```
 
 - **Claude:** reads Claude Code's login from the macOS keychain (or `~/.claude/.credentials.json`) and checks your 5-hour and weekly windows, the same figures Claude Code's `/usage` shows. Routing leaves the subscription when a window reaches 98%, or as soon as usage credits start going up. The login is never stored, logged or refreshed.
 - **Copilot:** uses OpenCode's stored GitHub login to read your monthly allowance, and stops routing to Copilot before paid credits beyond it are used. Business and Enterprise seats share credits across the organisation, so your seat's share is used (1,900 or 3,900 a month); set `copilot.monthlyCredits` if yours differs.
+- **OpenRouter:** asks OpenRouter's documented `GET /api/v1/key` endpoint, with the key OpenCode already holds (or `OPENROUTER_API_KEY`), how much of the key's spending limit is left. The dashboard shows "$4.50 left on the key limit" and when it resets, and routing leaves OpenRouter once the limit, or a workspace or guardrail budget above it, is spent. It also reads how many free-model requests are left today, so `:free` models are passed over when those run out while paid models stay usable. OpenRouter does not report the account's credit balance to an ordinary key, so a key with no limit shows what it has spent and nothing more; running out of account credit is still caught from the error.
 
 ### 5. Check it's working
 
@@ -244,6 +246,8 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `copilot.usageProbe` | false | Check Copilot's monthly allowance (see step 4) |
 | `copilot.avoidAdditionalCredits` / `reserveFraction` | true / 0.01 | Leave Copilot before paid credits beyond the allowance |
 | `copilot.economyAtPct` / `economyOutputPrice` | 0 (off) / 15 | Once this much of the allowance is used, models priced at this many dollars per million output tokens or more go to another provider when one can run them |
+| `openrouter.usageProbe` | false | Check how much of the OpenRouter key's spending limit is left (see step 4) |
+| `openrouter.reserveUsd` | 0 | Dollars of that limit kept back, to absorb requests already under way |
 | `copilot.monthlyCredits` | 0 (plan default) | Your included credits on a pooled Business or Enterprise seat |
 | `pace.enabled` | false | Pace guard: subagents pass over a plan that is on pace to run out before it resets. Needs a usage check (step 4) or a ChatGPT sign-in |
 | `pace.lightAgents` | none | Agents whose sessions are treated like subagents by the pace guard, for example `["explore"]` |
@@ -277,7 +281,7 @@ If you searched for one of these, this plugin is for you. Each is recognised, gi
 | OpenAI API | `insufficient_quota`, "You exceeded your current quota", `server_is_overloaded` | Moves on; a monthly limit until the 1st |
 | Gemini API | `RESOURCE_EXHAUSTED` (429), "You exceeded your current quota", "The model is overloaded" (503) | A per-minute limit retries in place after the delay Google gives; a daily quota moves on until midnight Pacific time. Limits are per model, so other Gemini models stay usable |
 | Vertex AI | "Resource exhausted, please try again later." | Treated as a short throttle on that model |
-| OpenRouter | "Insufficient credits" (402), "Key limit exceeded" (403), `free-models-per-day`, "No available providers" | Out of credit or a key limit blocks OpenRouter, until `resets_at` where it is given; the free-model allowance only blocks `:free` models, until the reset in `X-RateLimit-Reset`; an upstream rate limit only concerns that model |
+| OpenRouter | "Insufficient credits" (402), "Key limit exceeded" (403), workspace and guardrail budgets, `in_flight_budget_exhausted`, `free-models-per-day`, "No available providers" | Out of credit, a key limit or a budget blocks OpenRouter, until `resets_at` where it is given; the in-flight budget is a short wait, since nothing has been spent; the free-model allowance only blocks `:free` models, until the reset in `X-RateLimit-Reset`; an upstream rate limit only concerns that model |
 | Azure OpenAI | "exceeded token rate limit … Please retry after 26 seconds", `insufficient_quota` | Waits the stated time on that deployment; out of quota blocks the provider |
 | Amazon Bedrock | `ThrottlingException`, "Too many tokens per day", `ServiceUnavailableException`, `ModelNotReadyException`, `ExpiredTokenException` | Throttles and outages concern that model; expired AWS credentials block the provider until you sign in again |
 | Ollama Cloud, OpenCode Go, OpenCode Zen | "reached your hourly / weekly usage limit", OpenCode's `provider.go-limit`, `provider.free-limit` and `provider.budget-limit` errors | Moves on until the reset in the message, or for an hour, or until the 1st of the month, by the window named. These rules are written from the error types OpenCode defines and the wording the providers document, and have had less use than the rows above |

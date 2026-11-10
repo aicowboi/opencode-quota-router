@@ -154,7 +154,7 @@
         "message": "Key limit exceeded",
         "status": 403,
         "response": {
-          "body": "{\"error\": {\"code\": 403, \"message\": \"Key limit exceeded\", \"metadata\": {\"limit_source\": \"key_monthly\", \"resets_at\": \"2026-12-01T00:00:00Z\"}}}"
+          "body": "{\"error\": {\"code\": 403, \"message\": \"Key limit exceeded\", \"metadata\": {\"limit_source\": \"openrouter_key_limit\", \"resets_at\": \"2026-12-01T00:00:00Z\"}}}"
         }
       },
       "expect": {
@@ -162,8 +162,70 @@
         "pools": [
           "openrouter"
         ],
-        "evidence": "OpenRouter key monthly limit",
+        "evidence": "OpenRouter key limit reached",
         "resetAt": "2026-12-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "OpenRouter in-flight budget is a short wait, not a spent balance",
+      "provider": "openrouter",
+      "model": "anthropic/claude-opus-5.5",
+      "error": {
+        "type": "provider.quota",
+        "message": "Too many requests in flight for the remaining credit",
+        "status": 402,
+        "retryAfterMs": 3000,
+        "response": {
+          "body": "{\"error\": {\"code\": 402, \"message\": \"in_flight_budget_exhausted\", \"metadata\": {\"limit_source\": \"openrouter_in_flight_budget\"}}}"
+        }
+      },
+      "expect": {
+        "kind": "throttle",
+        "pools": [
+          "openrouter"
+        ],
+        "retryAfterMs": 3000
+      }
+    },
+    {
+      "name": "OpenRouter workspace budget",
+      "provider": "openrouter",
+      "model": "anthropic/claude-opus-5.5",
+      "error": {
+        "type": "provider.auth",
+        "message": "Budget exceeded",
+        "status": 403,
+        "response": {
+          "body": "{\"error\": {\"code\": 403, \"message\": \"Budget exceeded\", \"metadata\": {\"limit_source\": \"openrouter_workspace_budget\", \"resets_at\": \"2026-11-16T00:00:00Z\"}}}"
+        }
+      },
+      "expect": {
+        "kind": "billing",
+        "pools": [
+          "openrouter"
+        ],
+        "evidence": "OpenRouter workspace budget reached",
+        "resetAt": "2026-11-16T00:00:00Z"
+      }
+    },
+    {
+      "name": "OpenRouter account credit, named by its limit source",
+      "provider": "openrouter",
+      "model": "anthropic/claude-opus-5.5",
+      "error": {
+        "type": "provider.quota",
+        "message": "Payment required",
+        "status": 402,
+        "response": {
+          "body": "{\"error\": {\"code\": 402, \"message\": \"Payment required\", \"metadata\": {\"limit_source\": \"openrouter_credits\"}}}"
+        }
+      },
+      "expect": {
+        "kind": "billing",
+        "pools": [
+          "openrouter"
+        ],
+        "evidence": "OpenRouter credit used up"
       }
     },
     {

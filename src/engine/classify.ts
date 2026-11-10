@@ -195,7 +195,10 @@ function openrouter(error: SessionError, text: string, modelID: string, now: num
   if (free === "day") return signal("window", ["openrouter:free"], "OpenRouter daily allowance for free models", { resetAt: reset() })
   if (free === "min") return signal("throttle", ["openrouter:free"], "OpenRouter rate limit for free models", { retryAfterMs: wait(error, text) })
   const source = bodyString(error, "limit_source")
-  if (source || /key limit exceeded|limit exceeded for (?:this )?key/i.test(text)) return signal("billing", ["openrouter"], `OpenRouter ${source ? `${source.replaceAll("_", " ")} ` : "key "}limit`, { resetAt: reset() })
+  // Too many requests under way for the credit left: nothing is spent, and it clears as they finish.
+  if (source === "openrouter_in_flight_budget" || /in_flight_budget_exhausted/i.test(text)) return signal("throttle", ["openrouter"], "OpenRouter in-flight budget", { retryAfterMs: wait(error, text) })
+  if (source === "openrouter_credits") return signal("billing", ["openrouter"], "OpenRouter credit used up")
+  if (source || /key limit exceeded|limit exceeded for (?:this )?key/i.test(text)) return signal("billing", ["openrouter"], `OpenRouter ${(source ?? "key_limit").replace(/^openrouter_/, "").replaceAll("_", " ")} reached`, { resetAt: reset() })
   if (error.status === 402 || /insufficient credits|requires more credits|negative credit balance/i.test(text)) return signal("billing", ["openrouter"], "OpenRouter credit used up")
   if (error.status === 429) return signal("throttle", model, "OpenRouter rate limit", { retryAfterMs: wait(error, text) })
   if (error.status === 502 || error.status === 503 || /no (?:available|allowed) (?:model )?providers?/i.test(text)) return signal("overload", model, "OpenRouter has no provider available for this model")

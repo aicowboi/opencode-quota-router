@@ -83,6 +83,7 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   }
   probe("probe-claude", "Claude", config.claude.usageProbe, core.hasProvider("claude-agent"), core.claude, "claude.usageProbe")
   probe("probe-copilot", "Copilot", config.copilot.usageProbe, core.hasProvider("github-copilot"), core.copilot, "copilot.usageProbe")
+  probe("probe-openrouter", "OpenRouter", config.openrouter.usageProbe, core.hasProvider("openrouter"), core.openrouter, "openrouter.usageProbe")
   if (core.chatgptActive()) add(core.chatgpt.at ? { id: "probe-chatgpt", status: "ok", title: "ChatGPT plan windows are being read", detail: `Last seen ${minutes(now - core.chatgpt.at)} ago` } : { id: "probe-chatgpt", status: "info", title: "ChatGPT plan windows appear after the first request" })
 
   // Plans
