@@ -69,6 +69,31 @@ export type Config = {
    * toasts in the terminal; `system` also posts them through the operating system. Each kind can be turned off.
    */
   notifications: { enabled: boolean; system: boolean; events: { fallback: boolean; return: boolean; allLimited: boolean; spendCap: boolean; usageCheck: boolean } }
+  /**
+   * Export to an OpenTelemetry collector (OTLP over HTTP, JSON). Off until `enabled` is true. Whatever is left empty
+   * is read from the standard `OTEL_*` environment variables.
+   */
+  telemetry: {
+    enabled: boolean
+    /** Base URL of the collector; `/v1/metrics` and `/v1/logs` are added. */
+    endpoint: string
+    /** Only `http/json` is supported. Empty means: what the environment says, else `http/json`. */
+    protocol: string
+    /** Request headers, for example an API key. Values are never logged. */
+    headers: Record<string, string>
+    /** `totals` sends metrics only; `events` also sends one log record per limit, switch and recovery. */
+    level: "totals" | "events"
+    /** Whether usage is split by project: not at all, by a hash of its folder, or by its folder name. */
+    projects: "off" | "hashed" | "names"
+    /** Milliseconds between exports. 0 means OTEL_METRIC_EXPORT_INTERVAL, else one minute. */
+    intervalMs: number
+    /** `delta` or `cumulative`. Empty means OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE, else `delta`. */
+    temporality: string
+    /** Who the data is about. All empty by default: nothing identifies you unless you ask for it. `email: "git"` reads `git config user.email`. */
+    identity: { email: string; userId: string; organizationId: string; hostName: boolean }
+    /** Extra resource attributes, for example `{ "team": "platform" }`. */
+    attributes: Record<string, string>
+  }
   /** Days of raw detail to keep. Daily rollups, steps, routing and sessions are kept for good. */
   retention: { toolsDays: number; executionsDays: number; snapshotsDays: number; poolLogDays: number }
   log: { level: "debug" | "info" | "warn" }
@@ -137,6 +162,10 @@ export const DEFAULTS: Config = {
   dashboard: { enabled: true, port: 47321, host: "127.0.0.1", menubar: true },
   backfill: true,
   spend: { dailyUsd: 0, monthlyUsd: 0, providers: {} },
+  telemetry: {
+    enabled: false, endpoint: "", protocol: "", headers: {}, level: "totals", projects: "off", intervalMs: 0, temporality: "",
+    identity: { email: "", userId: "", organizationId: "", hostName: false }, attributes: {},
+  },
   notifications: { enabled: true, system: false, events: { fallback: true, return: true, allLimited: true, spendCap: true, usageCheck: true } },
   retention: { toolsDays: 400, executionsDays: 400, snapshotsDays: 90, poolLogDays: 730 },
   log: { level: "info" },
@@ -158,8 +187,11 @@ export const refLabel = (ref: ModelRef) => `${refKey(ref)}${ref.variant && ref.v
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v)
 const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"])
 
-/** Settings that only take effect from `opencode.jsonc`: changing where the dashboard listens needs a restart and a deliberate edit. */
-export const LOCKED_SETTINGS = ["dashboard.host", "dashboard.port", "explicitProviders"]
+/**
+ * Settings that only take effect from `opencode.jsonc`: changing where the dashboard listens needs a restart and a
+ * deliberate edit, and where telemetry is sent must not be changeable by anything that can reach the dashboard.
+ */
+export const LOCKED_SETTINGS = ["dashboard.host", "dashboard.port", "explicitProviders", "telemetry.endpoint", "telemetry.headers"]
 
 /** Lay one options object over another. Objects merge key by key; anything else in `patch` replaces the base value. */
 export function overlay(base: unknown, patch: unknown): Record<string, unknown> {
@@ -231,6 +263,9 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
   // Per-provider caps are keyed by provider ID, so they are read separately from the fixed options.
   const rawCaps = isObject(opts.spend) ? opts.spend.providers : undefined
   if (isObject(opts.spend)) opts.spend = { ...opts.spend, providers: {} }
+  // Telemetry headers and attributes are free-form maps of strings.
+  const rawTelemetry = isObject(opts.telemetry) ? opts.telemetry : undefined
+  if (rawTelemetry) opts.telemetry = { ...rawTelemetry, headers: {}, attributes: {} }
   const config = merge(DEFAULTS, opts, "", warnings)
 
   config.providers = { ...DEFAULTS.providers }
@@ -249,6 +284,34 @@ export function loadConfig(options: unknown): { config: Config; warnings: string
       if (!UNSAFE_KEYS.has(id)) config.spend.providers[id] = merge({ dailyUsd: 0, monthlyUsd: 0 }, value, `spend.providers.${id}.`, warnings)
     }
   } else if (rawCaps !== undefined) warnings.push("spend.providers should be an object of provider: { dailyUsd, monthlyUsd }; ignored")
+
+  config.telemetry = { ...config.telemetry, headers: {}, attributes: {} }
+  for (const name of ["headers", "attributes"] as const) {
+    const raw = rawTelemetry?.[name]
+    if (raw === undefined) continue
+    if (!isObject(raw)) warnings.push(`telemetry.${name} should be an object of name: value; ignored`)
+    else
+      for (const [key, value] of Object.entries(raw)) {
+        if (UNSAFE_KEYS.has(key)) continue
+        if (typeof value === "string") config.telemetry[name][key] = value
+        else warnings.push(`telemetry.${name}.${key} should be a string; ignored`)
+      }
+  }
+  const choice = <K extends "level" | "projects">(key: K, allowed: string[]) => {
+    if (allowed.includes(config.telemetry[key])) return
+    warnings.push(`telemetry.${key} should be one of ${allowed.join(", ")}; default kept`)
+    config.telemetry[key] = DEFAULTS.telemetry[key]
+  }
+  choice("level", ["totals", "events"])
+  choice("projects", ["off", "hashed", "names"])
+  if (!["", "http/json", "http/protobuf", "grpc"].includes(config.telemetry.protocol)) {
+    warnings.push("telemetry.protocol should be http/json; default kept")
+    config.telemetry.protocol = ""
+  }
+  if (!["", "delta", "cumulative"].includes(config.telemetry.temporality)) {
+    warnings.push("telemetry.temporality should be delta or cumulative; default kept")
+    config.telemetry.temporality = ""
+  }
 
   config.chains = { ...DEFAULTS.chains }
   if (isObject(rawChains)) {

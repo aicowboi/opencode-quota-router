@@ -31,8 +31,10 @@ export class Recorder {
   private price: Pricer
   private ensureSession: (id: string) => void
   private changed: (kind: string) => void
+  private onFallback: (sessionID: string) => boolean
 
-  constructor(store: Store, price: Pricer, ensureSession: (id: string) => void, changed: (kind: string) => void) {
+  constructor(store: Store, price: Pricer, ensureSession: (id: string) => void, changed: (kind: string) => void, onFallback: (sessionID: string) => boolean = () => false) {
+    this.onFallback = onFallback
     this.store = store
     this.price = price
     this.ensureSession = ensureSession
@@ -132,9 +134,9 @@ export class Recorder {
         const model = d.model as ModelRef
         const started = d.started ?? at
         this.store.run(
-          `INSERT OR IGNORE INTO steps (id, session_id, message_id, kind, provider_id, model_id, variant, agent, started_at, status, day)
-           VALUES (?, ?, ?, 'primary', ?, ?, ?, ?, ?, 'running', ?)`,
-          ev.id, sid, d.assistantMessageID, model?.providerID, model?.id, model?.variant, d.agent, started, localDay(started),
+          `INSERT OR IGNORE INTO steps (id, session_id, message_id, kind, provider_id, model_id, variant, agent, started_at, status, day, on_fallback)
+           VALUES (?, ?, ?, 'primary', ?, ?, ?, ?, ?, 'running', ?, ?)`,
+          ev.id, sid, d.assistantMessageID, model?.providerID, model?.id, model?.variant, d.agent, started, localDay(started), this.onFallback(sid!),
         )
         const e = this.exec(sid!, at)
         e.step = { id: ev.id, model, startedAt: started, agent: d.agent }

@@ -91,6 +91,17 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
   else add({ id: "notifications", status: "ok", title: `Notifications are on${nf.system ? ", and also sent through the operating system" : ""}`, detail: off.length ? `Turned off: ${off.join(", ")}` : undefined })
   if (nf.enabled && nf.system && !["darwin", "linux"].includes(process.platform)) add({ id: "notifications-system", status: "warn", title: "System notifications are not supported on this platform", fix: 'Remove "system": true from notifications.' })
 
+  // Telemetry export
+  const tm = core.telemetry.status()
+  if (tm.enabled) {
+    const what = `${tm.level === "events" ? "Metrics and events" : "Metrics"} every ${Math.round(tm.intervalMs / 1000)} s to ${tm.endpoint}${tm.headerNames.length ? ` · headers: ${tm.headerNames.join(", ")}` : ""}${tm.identity.length ? ` · identifies you by ${tm.identity.join(", ")}` : " · no identity attributes"}${tm.projects !== "off" ? ` · projects ${tm.projects}` : ""}`
+    for (const [i, p] of tm.problems.entries()) add({ id: `telemetry-${i}`, status: "fail", title: "Telemetry export cannot run", detail: p })
+    if (!tm.problems.length) {
+      if (tm.lastError) add({ id: "telemetry", status: "warn", title: "Telemetry export is failing", detail: `${tm.lastError} · ${tm.queued} queued`, fix: "Check the endpoint and headers under telemetry in opencode.jsonc." })
+      else add({ id: "telemetry", status: tm.lastOk ? "ok" : "info", title: tm.lastOk ? "Telemetry export is working" : "Telemetry export is on; nothing sent yet", detail: `${what}${tm.lastOk ? ` · last sent ${minutes(now - tm.lastOk)} ago` : ""}` })
+    }
+  } else add({ id: "telemetry", status: "info", title: "Telemetry export is off", detail: "Nothing leaves this machine." })
+
   // Dashboard
   if (!config.dashboard.enabled) add({ id: "dashboard", status: "info", title: "Dashboard is turned off" })
   else if (!core.dashboardURL) add({ id: "dashboard", status: "fail", title: "Dashboard could not start", detail: `Ports ${config.dashboard.port}–${config.dashboard.port + 4} were all taken.`, fix: "Set dashboard.port to a free port." })

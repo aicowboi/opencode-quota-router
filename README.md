@@ -186,6 +186,8 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 
 **Notifications:** quota-router tells you when a session falls back, when it returns, when every provider is limited, when a spend cap is reached, and when a usage check has been failing for ten minutes. They appear on the dashboard, in the menu bar's menu, and as toasts in the OpenCode terminal. Set `"notifications": { "system": true }` to also get them from the operating system (`osascript` on macOS, `notify-send` on Linux). The same thing is not repeated within a few minutes, there are never more than 20 an hour, and each kind can be turned off under `notifications.events`. A notification holds model and provider names and the reason for the change; never a prompt, a session title or any code.
 
+**Telemetry export:** to see the same totals in Grafana, Datadog, Honeycomb or your own OpenTelemetry collector, set `"telemetry": { "enabled": true, "endpoint": "https://…" }`. It is off by default, sends counts and costs only, and identifies you or your projects only if you ask it to. See [docs/telemetry.md](docs/telemetry.md).
+
 **Data:** `~/.local/share/opencode-quota-router/router.db` (SQLite) holds daily rollups, cached session totals and retention settings, sized for years of use. On first start, earlier usage is imported read-only from OpenCode's own database.
 
 ## Commands
@@ -200,6 +202,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 | `/router resume` | Resume routing for every session |
 | `/router dry-run on` / `off` | Record what routing would do without moving any session |
 | `/router doctor` | Run the health check and open it on the dashboard |
+| `/router telemetry on` / `off` | Turn the OpenTelemetry export on or off (the endpoint comes from `opencode.jsonc` or `OTEL_*`) |
 
 Commands that change a setting store it in the plugin's own database, on top of your `opencode.jsonc`, which is never written to.
 
@@ -229,6 +232,10 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `notifications.enabled` | true | Record notifications and show them on the dashboard, in the menu bar and as terminal toasts |
 | `notifications.system` | false | Also post them through the operating system (macOS and Linux) |
 | `notifications.events.<kind>` | true | Turn one kind off: `fallback`, `return`, `allLimited`, `spendCap`, `usageCheck` |
+| `telemetry.enabled` | false | Export usage, plan pressure and fallbacks to an OpenTelemetry collector; see [docs/telemetry.md](docs/telemetry.md) |
+| `telemetry.endpoint` / `headers` | from `OTEL_*` | Where to send, and request headers such as an API key. HTTPS only, except to this machine |
+| `telemetry.level` / `projects` | `totals` / `off` | `events` adds a log record per limit, switch and recovery; `hashed` or `names` splits usage by project |
+| `telemetry.identity` | all empty | Opt-in `email`, `userId`, `organizationId`, `hostName` attributes |
 | `dashboard.enabled` / `port` / `menubar` | true / 47321 / true | Local dashboard and menu bar item |
 | `backfill` | true | Import earlier OpenCode usage on first start |
 | `retention.toolsDays` / `executionsDays` / `snapshotsDays` / `poolLogDays` | 400 / 400 / 90 / 730 | Days of raw detail kept; rollups and requests are kept for good |
@@ -278,7 +285,7 @@ Yes. Give that provider the lowest `priority`, and change any chain entry with `
 [opencode-rate-limit-fallback](https://github.com/azumag/opencode-rate-limit-fallback) is a well-established general fallback list with retry policies and a circuit breaker. quota-router is built around subscription plans. It reads plan usage and exact reset times to move before a limit and back after it, keeps effort levels across providers, avoids paid overage, and adds a usage and cost dashboard. Pick the one that matches how you pay for models.
 
 **Does it send my data anywhere?**
-No. Everything stays on your machine. The optional usage checks call the same endpoints Claude Code and Copilot use, with logins that are already on your machine; see [SECURITY.md](SECURITY.md).
+Not unless you tell it to. Everything stays on your machine. The optional [telemetry export](docs/telemetry.md) is off by default and sends token counts, costs and fallback counts to an endpoint you choose; never prompts, code or session titles. The optional usage checks call the same endpoints Claude Code and Copilot use, with logins that are already on your machine; see [SECURITY.md](SECURITY.md).
 
 ## Troubleshooting
 

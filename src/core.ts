@@ -14,6 +14,7 @@ import { markDirty, optimize, prune, refreshSessions, rollupDirty } from "./main
 import { applyDiscovery, suggest, withAdditions, type ConnectionMethod } from "./engine/discovery.ts"
 import type { CodexWindow } from "./engine/headers.ts"
 import { Recorder } from "./recorder.ts"
+import { Telemetry } from "./telemetry/exporter.ts"
 import { nextMonthUtc } from "./engine/resets.ts"
 import { findInChains, type Preferred } from "./engine/router.ts"
 import type { ModelInfo, ModelRef, PoolState, Signal, Tokens } from "./engine/types.ts"
@@ -77,6 +78,8 @@ export class Core {
   private lastSnapshot = new Map<string, { json: string; at: number }>()
   private maintaining = false
   shutdown?: () => Promise<void>
+  readonly version = VERSION
+  readonly telemetry: Telemetry
 
   private constructor(store: Store, log: Logger, options: unknown) {
     this.store = store
@@ -99,7 +102,8 @@ export class Core {
       }
       this.notify("pools")
     })
-    this.recorder = new Recorder(store, (p, m, t, r) => this.price(p, m, t, r), (id) => void this.fetchSession(id), (k) => this.notify(k))
+    this.recorder = new Recorder(store, (p, m, t, r) => this.price(p, m, t, r), (id) => void this.fetchSession(id), (k) => this.notify(k), (id) => !!this.sessions.get(id)?.fallback)
+    this.telemetry = new Telemetry(this)
     for (const w of warnings) log.warn("config", { warning: w })
   }
 
@@ -174,7 +178,7 @@ export class Core {
     if (providerID === "openai") this.chatgpt = { ok: false }
   }
 
-  private metaJSON<T>(key: string, fallback: T): T {
+  metaJSON<T>(key: string, fallback: T): T {
     try {
       return JSON.parse(this.store.meta(key) ?? "") as T
     } catch {
@@ -625,6 +629,7 @@ export class Core {
       void this.refreshModels()
       this.maintain()
       this.checkAlerts()
+      void this.telemetry.tick()
       this.notify("tick")
     }
     const t = setInterval(tick, 30_000)

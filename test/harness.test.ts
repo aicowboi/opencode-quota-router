@@ -236,7 +236,7 @@ test("store: rollups match raw rows, pagination and retention", async () => {
   const { Store, localDay } = await import("../src/db.ts")
   const m = await import("../src/maintenance.ts")
   const store = await Store.open(path.join(tmp, "big.db"))
-  assert.equal(store.meta("schema_version"), "4")
+  assert.equal(store.meta("schema_version"), "5")
   assert.equal(Number((store.get("PRAGMA auto_vacuum") as any).auto_vacuum), 2, "incremental auto-vacuum")
   const now = Date.now()
   const DAY = 86_400_000

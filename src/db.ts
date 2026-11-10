@@ -162,6 +162,19 @@ export class Store {
         this.setMeta("schema_version", "4")
       })
     }
+    if (version < 5) {
+      this.transaction(() => {
+        // Whether a request was served while its session was on a fallback, and a queue of telemetry not yet delivered.
+        this.addColumn("steps", "on_fallback", "INTEGER NOT NULL DEFAULT 0")
+        this.driver.exec(`
+          CREATE INDEX IF NOT EXISTS steps_ended ON steps (ended_at);
+          CREATE TABLE IF NOT EXISTS telemetry_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, signal TEXT NOT NULL, body TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL DEFAULT 0);
+        `)
+        this.setMeta("schema_version", "5")
+      })
+    }
   }
 
   private stmt(sql: string): Statement {

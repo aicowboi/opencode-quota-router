@@ -148,7 +148,7 @@ export default {
     await ctx.command.transform((editor: any) => {
       editor.add({
         name: "router",
-        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | doctor",
+        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | doctor | telemetry on|off",
         execute: async (input: { sessionID: string; prompt: { text?: string } }) => {
           const { sessionID, prompt } = input
           core.log.info("command", { sessionID, text: prompt?.text })
@@ -182,6 +182,19 @@ export default {
               const on = arg !== "off"
               const r = core.setSetting("dryRun", on)
               text = !r.ok ? r.error : on ? "Dry run is on: routing decisions are recorded on the dashboard, and no session is moved." : "Dry run is off: routing is live again."
+              break
+            }
+            case "telemetry": {
+              const on = arg !== "off"
+              const r = core.setSetting("telemetry.enabled", on)
+              const t = core.telemetry.status()
+              text = !r.ok
+                ? r.error
+                : !on
+                  ? "Telemetry export is off. Nothing leaves this machine."
+                  : t.problems.length
+                    ? `Telemetry export is on but cannot run: ${t.problems.join("; ")}`
+                    : `Telemetry export is on: ${t.level === "events" ? "metrics and events" : "metrics"} go to ${t.endpoint} every ${Math.round(t.intervalMs / 1000)} s. No prompts, code or session titles are sent.`
               break
             }
             case "doctor":
