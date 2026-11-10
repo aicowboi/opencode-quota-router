@@ -231,8 +231,10 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           let body = ""
           for await (const chunk of req) body += chunk
           const a = JSON.parse(body || "{}")
-          if (a.action === "reset-pool" && typeof a.pool === "string") core.pools.reset(a.pool, "dashboard")
-          else if (a.action === "pause") core.paused = true
+          if (a.action === "reset-pool" && typeof a.pool === "string") {
+            core.pools.reset(a.pool, "dashboard")
+            core.settle()
+          } else if (a.action === "pause") core.paused = true
           else if (a.action === "resume") core.paused = false
           else if (a.action === "dry-run" && typeof a.on === "boolean") core.setSetting("dryRun", a.on)
           else if (a.action === "save" && typeof a.provider === "string" && core.config.providers[a.provider] && Number.isFinite(a.minutes) && a.minutes >= 1 && a.minutes <= 7 * 1440)

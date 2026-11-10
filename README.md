@@ -165,6 +165,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
   - Short throttles (a `retry-after` of 20 s or less) retry on the same provider.
   - Anything else switches the session to the next provider inside OpenCode's retry hook. The same request runs again there, with no extra messages and no lost tool calls.
 - **At the next turn.** The session moves to the highest-priority provider that's available, so it returns once a limit resets.
+- **A move has a cost.** The new provider has no cache of the conversation, so the whole context is sent again at full price. A session that was just moved stays where it is for three minutes before returning up the chain, as long as the provider it is on still works; a session with 100k tokens of context or more waits up to a minute on a throttle before moving; and the routing log says what each move sends again, with a price for pay-per-use providers. Resetting a pool or ending a "save for later" returns sessions at their next turn.
 - **Health is per pool and shared.** A pool is something that can run out: the Claude subscription, its per-model weekly limits, or an API key. Every session shares that health, and it survives restarts.
 - **Reset times** come from the provider wherever possible: Claude's limit message, Copilot's `Retry-After`, Anthropic's monthly spend cap and rate-limit headers. Otherwise a backing-off cooldown applies, and the provider is retried at a turn boundary.
 - **When everything is limited,** the request waits for the earliest reset, up to 30 minutes per retry. A failed session is continued once at that reset, if nothing else happened in it.
@@ -230,6 +231,8 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `discovery.enabled` | true | Rank and show every connected provider, not only the ones listed here |
 | `chatgpt.cutoverAtPct` / `warnAtPct` | 98 / 85 | Leave a ChatGPT plan before its 5-hour or weekly window is spent |
 | `throttle.maxWaitMs` / `inPlaceRetries` | 20000 / 2 | Short throttles retried on the same provider |
+| `switching.minStayMs` | 3 min | After routing moves a session, how long it stays before returning up the chain, while the provider it is on still works |
+| `switching.largeContextTokens` / `largeContextMaxWaitMs` | 100000 / 60000 | A session with this much context waits this long on a throttle before it moves |
 | `onExhausted.mode` / `maxWaitMs` | `wait` / 30 min | When everything is limited: wait for the earliest reset, or `fail` |
 | `claude.usageProbe` | false | Check Claude subscription usage (see step 4) |
 | `claude.avoidUsageCredits` / `cutoverAtPct` | true / 98 | Leave the subscription before usage credits are drawn |

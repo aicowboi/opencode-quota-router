@@ -36,6 +36,8 @@ export type SessionState = {
   resumes: number[]
   deferred?: { at: number; executionEventID: string }
   parentID?: string
+  /** When routing last moved the session. */
+  movedAt?: number
   /** The agent the session runs as, when known. */
   agent?: string
   /** The user chose a model in this session, which outranks the chain configured for its agent. */
@@ -291,7 +293,10 @@ export class Core {
   save(providerID: string, until?: number) {
     const next = this.saved()
     if (until && until > Date.now()) next[providerID] = until
-    else delete next[providerID]
+    else {
+      delete next[providerID]
+      this.settle()
+    }
     this.store.setMeta("saved", JSON.stringify(next))
     this.log.info("save", { provider: providerID, until: until && new Date(until).toISOString() })
     this.notify("pools")
@@ -575,6 +580,26 @@ export class Core {
     else if (r.trigger === "exhausted") this.alert({ kind: "allLimited", sessionID: r.sessionID, title: "Every provider is limited", body: "Nothing in the chain can take the request. The dashboard shows when each one is free again." })
   }
 
+  /** What a switch costs: the new provider has no cache of the conversation, so the whole context is sent again. */
+  resendNote(s: SessionState, target: ModelRef): string | undefined {
+    const tokens = s.lastInputTokens ?? 0
+    if (tokens < 20_000) return undefined
+    const cost = this.price(target.providerID, target.id, { input: tokens, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, 0).actual
+    return `sends ${Math.round(tokens / 1000)}k tokens of context again${cost >= 0.01 ? `, about $${cost.toFixed(2)}` : ""}`
+  }
+
+  /** The user asked for a provider back (a reset, or the end of a save): sessions may return to it at their next turn. */
+  settle() {
+    for (const s of this.sessions.values()) s.movedAt = undefined
+  }
+
+  /** The session's current model can keep serving it: not limited, not cooling, and not passed over by a policy. */
+  canStay(s: SessionState): boolean {
+    const m = s.current
+    if (!m || this.config.providers[m.providerID]?.allow === "never" || !this.models.has(refKey(m))) return false
+    return this.poolsFor(m).every((p) => this.pools.usable(p) === "yes") && !this.gate(s)?.(m)
+  }
+
   /**
    * Switch a session's model, remembering that the switch was ours so it is not read as a manual change.
    * Returns false in a dry run, where the switch is recorded but not made.
@@ -587,8 +612,11 @@ export class Core {
     }
     s.pending.push({ model: target, at: Date.now() })
     s.pending = s.pending.filter((p) => Date.now() - p.at < 120_000)
+    const resend = this.resendNote(s, target)
+    if (resend) evidence = [evidence ?? signal?.evidence, resend].filter(Boolean).join(" · ")
     await this.ctx.session.switchModel({ sessionID: s.id, model: target })
     s.current = target
+    s.movedAt = Date.now()
     if (["failover", "resume", "wait", "deferred", "preempt"].includes(trigger)) {
       if (!s.fallback && from) s.fallback = { from, reason: evidence ?? signal?.evidence, at: Date.now() }
     } else s.fallback = undefined

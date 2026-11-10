@@ -170,6 +170,7 @@ export default {
               break
             case "reset":
               for (const p of core.pools.all()) if (!arg || arg === "all" || p.id === arg || p.id.startsWith(`${arg}:`)) core.pools.reset(p.id, "command")
+              core.settle()
               text = `Cleared ${arg && arg !== "all" ? arg : "all pools"}.`
               break
             case "pause":

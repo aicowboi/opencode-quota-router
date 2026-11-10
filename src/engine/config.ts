@@ -32,6 +32,12 @@ export type Config = {
   agents: Record<string, string>
   recovery: { skewMs: number }
   throttle: { maxWaitMs: number; inPlaceRetries: number; cooldownMs: number; maxCooldownMs: number }
+  /**
+   * A switch throws away the provider's cache of the conversation, so the whole context is sent again at full price.
+   * After a switch the session stays where it is for `minStayMs` before returning up the chain, and a session with a
+   * large context (`largeContextTokens` or more) waits up to `largeContextMaxWaitMs` on a throttle before it moves.
+   */
+  switching: { minStayMs: number; largeContextTokens: number; largeContextMaxWaitMs: number }
   overload: { inPlaceRetries: number; cooldownMs: number; maxCooldownMs: number }
   billing: { probeAfterMs: number }
   onExhausted: { mode: "wait" | "fail"; maxWaitMs: number }
@@ -159,6 +165,7 @@ export const DEFAULTS: Config = {
   agents: {},
   recovery: { skewMs: 60_000 },
   throttle: { maxWaitMs: 20_000, inPlaceRetries: 2, cooldownMs: 60_000, maxCooldownMs: 10 * 60_000 },
+  switching: { minStayMs: 3 * 60_000, largeContextTokens: 100_000, largeContextMaxWaitMs: 60_000 },
   overload: { inPlaceRetries: 2, cooldownMs: 2 * 60_000, maxCooldownMs: 10 * 60_000 },
   billing: { probeAfterMs: 6 * HOUR },
   onExhausted: { mode: "wait", maxWaitMs: 30 * 60_000 },

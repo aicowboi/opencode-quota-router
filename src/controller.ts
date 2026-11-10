@@ -42,7 +42,10 @@ async function decideRetry(core: Core, e: RetryEvent) {
   if (signal.kind === "throttle" || signal.kind === "overload") {
     const wait = signal.retryAfterMs ?? (e.decision.retry ? e.decision.delay : 0)
     const allowed = signal.kind === "throttle" ? core.config.throttle.inPlaceRetries : core.config.overload.inPlaceRetries
-    if (e.decision.retry && wait <= core.config.throttle.maxWaitMs && e.attempt <= allowed + 1) return
+    // A large context costs more to send again elsewhere than a longer wait costs here.
+    const large = (s.lastInputTokens ?? 0) >= core.config.switching.largeContextTokens
+    const patience = large ? Math.max(core.config.throttle.maxWaitMs, core.config.switching.largeContextMaxWaitMs) : core.config.throttle.maxWaitMs
+    if (e.decision.retry && wait <= patience && e.attempt <= allowed + 1) return
   }
 
   s.lastRetry = { attempt: e.attempt, from: fromKey, at: now }
@@ -96,6 +99,8 @@ export async function onPrompt(core: Core, e: { sessionID: string; metadata?: Re
   const chain = orderedChain(core.config, s.preferred.chain)
   const currentIndex = s.current ? chain.findIndex((c) => c.providerID === s.current!.providerID && c.id === s.current!.id) : -1
   const trigger = currentIndex !== -1 && r.index < currentIndex ? "recovery" : currentIndex === -1 ? "route" : "preempt"
+  // Each move sends the whole context again, so a session that has just been moved stays put for a few minutes.
+  if (trigger === "recovery" && s.movedAt && Date.now() - s.movedAt < core.config.switching.minStayMs && core.canStay(s)) return
   const evidence =
     trigger === "recovery"
       ? r.usable === "trial"
@@ -146,6 +151,7 @@ export async function onEvent(core: Core, ev: { id: string; type: string; create
       // A change we did not make is the user's choice: it sets the session's chain and effort level.
       s.current = d.model
       s.fallback = undefined
+      s.movedAt = undefined
       s.picked = true
       s.byAgent = false
       s.preferred = core.preferredFor(d.model)

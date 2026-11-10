@@ -20,6 +20,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Changed
 
+- Routing counts the cost of a move (`switching`): a session that was just moved stays for three minutes before returning up the chain, a session with a large context waits up to a minute on a throttle before moving, and the routing log says how much context each move sends again.
 - GitHub Actions are pinned to commit SHAs and no longer keep credentials after checkout.
 
 ## [0.1.0] - 2026-11-09

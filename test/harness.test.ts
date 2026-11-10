@@ -104,6 +104,12 @@ test("next turn returns to Claude once its window has reset", async () => {
   // Pretend the reset time passed.
   const p = core.pools.get("claude-agent")
   core.pools.load([{ ...p, until: Date.now() - 1000 }])
+  // The session was moved moments ago and xAI still works, so it stays: moving back would send the context a third time.
+  const moves = harness.calls.switches.length
+  await onPrompt(core, { sessionID: sid })
+  await flush()
+  assert.equal(harness.calls.switches.length, moves)
+  core.session(sid).movedAt = Date.now() - core.config.switching.minStayMs - 1
   await onPrompt(core, { sessionID: sid })
   await flush()
   assert.deepEqual(harness.calls.switches.at(-1).model, { providerID: "claude-agent", id: "opus", variant: "medium" })
@@ -750,5 +756,50 @@ test("pace guard: a subagent leaves a plan that is on pace to run out, and the m
   core.store.run("DELETE FROM usage_snapshots")
   ;(core as any).forecastCache = undefined
   for (const id of ["ses_pace_main", "ses_pace_sub"]) core.sessions.delete(id)
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+})
+
+test("switching cost: a large context waits longer in place, and a move says what it sends again", async () => {
+  const sid = "ses_cache"
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  harness.sessionModels.set(sid, opus)
+  await onEvent(core, evt("session.created", { sessionID: sid, model: opus }))
+  const s = core.session(sid)
+  const throttled = (delay: number): any => ({ sessionID: sid, model: opus, error: { type: "provider.rate_limit", status: 429, message: "rate limited", response: { headers: { "retry-after": String(delay / 1000) } } }, attempt: 1, decision: { retry: true, delay } })
+  const moves = harness.calls.switches.length
+
+  // 45 seconds is longer than a small session waits, so it moves.
+  let e = throttled(45_000)
+  await onRetry(core, e)
+  await flush()
+  assert.equal(harness.calls.switches.length, moves + 1)
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  s.current = opus
+  s.lastRetry = undefined
+
+  // With 150k tokens of context, the same wait is cheaper than sending it all to another provider.
+  s.lastInputTokens = 150_000
+  e = throttled(45_000)
+  await onRetry(core, e)
+  await flush()
+  assert.equal(harness.calls.switches.length, moves + 1)
+  assert.deepEqual(e.decision, { retry: true, delay: 45_000 })
+  // Past the longer wait it moves, and the routing log says what the move costs.
+  e = throttled(90_000)
+  await onRetry(core, e)
+  await flush()
+  assert.equal(harness.calls.switches.at(-1).model.providerID, "xai")
+  let row: any = core.store.get("SELECT evidence FROM routing WHERE session_id = ? ORDER BY rowid DESC LIMIT 1", sid)
+  assert.match(row.evidence, / · sends 150k tokens of context again$/)
+  // A pay-per-use target has a price: 150k input tokens at $2 per million.
+  for (const p of ["xai", "github-copilot", "anthropic"]) core.pools.report({ kind: "window", pools: [p], resetAt: Date.now() + 3_600_000, evidence: "limit" })
+  await onPrompt(core, { sessionID: sid })
+  await flush()
+  assert.equal(harness.calls.switches.at(-1).model.providerID, "openai")
+  row = core.store.get("SELECT evidence FROM routing WHERE session_id = ? ORDER BY rowid DESC LIMIT 1", sid)
+  assert.match(row.evidence, /sends 150k tokens of context again, about \$0\.30$/)
+
+  core.sessions.delete(sid)
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
 })
