@@ -169,6 +169,9 @@ tr.other td { color: var(--muted) }
 .tip .r { display: flex; justify-content: space-between; gap: 16px }
 
 footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height: 1.7 }
+.check { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px }
+.check:first-child { border-top: 0 }
+.check .fix { color: var(--soft); font-size: 12.5px }
 .banner { margin-top: 14px; font-size: 13px; color: var(--warn) }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important } }
 </style>
@@ -240,6 +243,11 @@ footer { padding: 36px 0 48px; color: var(--faint); font-size: 12px; line-height
       <div class="tabs" id="sgroup"></div>
     </div>
     <div id="sessions"></div>
+  </section>
+
+  <section aria-labelledby="h-doctor" id="doctor">
+    <div class="sec-head"><h2 id="h-doctor">Health check</h2><span class="caption" id="doctorCaption">What is connected, what would be used, and what needs attention</span><span class="spacer"></span><button class="more" id="doctorRun">Run check</button></div>
+    <div id="doctorList"></div>
   </section>
 </main>
 
@@ -564,6 +572,27 @@ async function loadDay(el) {
     }
   }
 }
+
+// ---------- health check ----------
+const CHECK = { ok: ["✓", "st-ok", "OK"], warn: ["!", "st-warn", "Needs attention"], fail: ["✕", "st-bad", "Problem"], info: ["·", "muted", "Note"] }
+async function loadDoctor() {
+  const el = $("doctorList")
+  el.setAttribute("aria-busy", "true")
+  try {
+    const d = await api("/api/doctor")
+    const order = { fail: 0, warn: 1, info: 2, ok: 3 }
+    const checks = d.checks.slice().sort((a, b) => order[a.status] - order[b.status])
+    const bad = checks.filter((c) => c.status === "fail" || c.status === "warn").length
+    $("doctorCaption").textContent = (bad ? bad + " " + plural(bad, "item needs", "items need") + " attention" : "Everything looks right") + " · checked " + fmtTime(d.at)
+    el.innerHTML = checks.map((c) => { const [mark, cls, label] = CHECK[c.status] || CHECK.info
+      return '<div class="check"><span class="' + cls + '" role="img" aria-label="' + label + '">' + mark + "</span><div><div>" + esc(c.title) + "</div>" +
+        (c.detail ? '<div class="why">' + esc(c.detail) + "</div>" : "") + (c.fix && c.status !== "ok" ? '<div class="fix">' + esc(c.fix) + "</div>" : "") + "</div></div>" }).join("")
+  } catch { el.innerHTML = '<div class="empty">The health check could not run.</div>' }
+  el.removeAttribute("aria-busy")
+}
+$("doctorRun").onclick = loadDoctor
+if (location.hash === "#doctor") loadDoctor().then(() => $("doctor").scrollIntoView())
+addEventListener("hashchange", () => { if (location.hash === "#doctor") loadDoctor() })
 
 // ---------- usage chart ----------
 const METRICS = [["tokens", "Tokens"], ["equiv", "Value"], ["actual", "Spend"]]

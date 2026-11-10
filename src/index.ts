@@ -4,6 +4,7 @@ import { refLabel } from "./engine/config.ts"
 import { onCodexResponse, onEvent, onHttpResponse, onPrompt, onRetry } from "./controller.ts"
 import { Core, VERSION } from "./core.ts"
 import { startDashboard } from "./dashboard/server.ts"
+import { doctorText, runDoctor } from "./doctor.ts"
 import { codexWindows, headroom } from "./engine/headers.ts"
 import { orderedChain } from "./engine/router.ts"
 import { execFile } from "node:child_process"
@@ -147,7 +148,7 @@ export default {
     await ctx.command.transform((editor: any) => {
       editor.add({
         name: "router",
-        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off",
+        description: "quota-router: open the dashboard, or pin | unpin | reset <pool|all> | pause | resume | dry-run on|off | doctor",
         execute: async (input: { sessionID: string; prompt: { text?: string } }) => {
           const { sessionID, prompt } = input
           core.log.info("command", { sessionID, text: prompt?.text })
@@ -183,6 +184,11 @@ export default {
               text = !r.ok ? r.error : on ? "Dry run is on: routing decisions are recorded on the dashboard, and no session is moved." : "Dry run is off: routing is live again."
               break
             }
+            case "doctor":
+              // The dashboard shows the checks straight away; the note repeats them in the session at its next turn.
+              if (core.dashboardURL) void openURL(`${core.dashboardURL}/#doctor`)
+              text = `quota-router health check\n${doctorText(runDoctor(core))}`
+              break
             default:
               // status / dashboard: open the dashboard. A queued note would only appear on the next turn.
               if (core.dashboardURL) return openURL(core.dashboardURL)

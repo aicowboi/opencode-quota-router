@@ -3,6 +3,7 @@
 import http from "node:http"
 import { refLabel } from "../engine/config.ts"
 import { VERSION, type Core } from "../core.ts"
+import { runDoctor } from "../doctor.ts"
 import { orderedChain } from "../engine/router.ts"
 import fs from "node:fs"
 import path from "node:path"
@@ -149,6 +150,8 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           return json(res, { app: "quota-router", pid: process.pid })
         case "/api/state":
           return json(res, buildState(core))
+        case "/api/doctor":
+          return json(res, { at: Date.now(), checks: runDoctor(core) })
         case "/api/menubar":
           return json(res, buildMenubar(core))
         case "/api/summary":

@@ -328,6 +328,8 @@ test("dashboard serves the page and state, and rejects foreign hosts", async () 
     assert.match(await page.text(), /quota-router/)
     const state: any = await (await fetch(`${d.url}/api/state`)).json()
     assert.ok(Array.isArray(state.providers) && state.providers[0].id === "claude-agent")
+    const doctor: any = await (await fetch(`${d.url}/api/doctor`)).json()
+    assert.ok(doctor.checks.some((c: any) => c.id === "routing" && c.status === "ok"))
     // fetch cannot override Host, so use a raw request, as a DNS-rebinding page would produce.
     const http = await import("node:http")
     const status = await new Promise<number>((resolve, reject) => {
@@ -412,4 +414,34 @@ test("dry run records what routing would do and changes nothing", async () => {
   core.setSetting("dryRun", undefined)
   assert.equal(core.config.dryRun, false)
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+})
+
+test("doctor reports the setup without touching credentials", async () => {
+  const { runDoctor, doctorText } = await import("../src/doctor.ts")
+  const by = () => Object.fromEntries(runDoctor(core).map((c: any) => [c.id, c]))
+  let c = by()
+  assert.equal(c.routing.status, "ok")
+  assert.equal(c.config.status, "ok")
+  assert.equal(c.providers.title, "5 connected providers")
+  assert.equal(c["chain-opus"].status, "ok")
+  assert.match(c["chain-opus"].detail, /^claude-agent\/opus#medium → xai\/grok-4\.7#high/)
+  // Haiku's models are not connected in this harness: reported, not a problem.
+  assert.equal(c["chain-haiku"].status, "info")
+  assert.equal(c["probe-claude"].status, "info")
+  assert.equal(c.storage.status, "ok")
+  assert.ok(!JSON.stringify(c).includes(os.homedir()))
+
+  core.paused = true
+  core.pools.report({ kind: "window", pools: ["xai"], resetAt: Date.now() + 3_600_000, evidence: "weekly limit" })
+  core.setOptions({ claude: { usageProbe: "yes" }, backfill: false, dashboard: { enabled: false }, providers: { "github-copilot": { allow: "never" }, anthropic: { allow: "never" }, openai: { allow: "never" }, xai: { allow: "never" } } })
+  c = by()
+  assert.equal(c.routing.title, "Routing is paused")
+  assert.match(c["config-0"].detail, /claude\.usageProbe/)
+  assert.equal(c["chain-opus"].status, "warn")
+  assert.equal(c["pool-xai"].detail, "weekly limit")
+  assert.match(doctorText(Object.values(c) as any), /! Chain opus: no fallback/)
+
+  core.paused = false
+  core.pools.reset("xai", "test")
+  core.setOptions({ claude: { usageProbe: false }, copilot: { usageProbe: false }, backfill: false, dashboard: { enabled: false } })
 })

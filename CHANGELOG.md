@@ -7,6 +7,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ### Added
 
 - Dry run: `/router dry-run on` records what routing would do, as "Would: …" rows in the routing log, without moving a session or changing a retry.
+- `/router doctor` and a Health check section on the dashboard: connected providers, chains with no fallback, models a provider no longer offers, failing usage checks, and what to change.
 - Settings can be changed while OpenCode runs. They are stored in the plugin's database on top of `opencode.jsonc`, which is never written to.
 - The routing engine has its own entry point, `opencode-quota-router/engine`, with no dependency on OpenCode.
 

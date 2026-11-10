@@ -177,6 +177,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 - the route, with each provider's live state and allowances;
 - running sessions;
 - a routing log grouped by day;
+- a health check of your setup;
 - usage charts, breakdowns by model, project, agent and tool, and searchable sessions;
 - CSV export.
 
@@ -195,6 +196,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 | `/router pause` | Pause routing for every session |
 | `/router resume` | Resume routing for every session |
 | `/router dry-run on` / `off` | Record what routing would do without moving any session |
+| `/router doctor` | Run the health check and open it on the dashboard |
 
 Commands that change a setting store it in the plugin's own database, on top of your `opencode.jsonc`, which is never written to.
 
@@ -265,6 +267,8 @@ Yes. Give that provider the lowest `priority`, and change any chain entry with `
 No. Everything stays on your machine. The optional usage checks call the same endpoints Claude Code and Copilot use, with logins that are already on your machine; see [SECURITY.md](SECURITY.md).
 
 ## Troubleshooting
+
+Start with `/router doctor`. It checks that routing is on, which providers are connected, whether every chain has somewhere to fall back to, whether the usage checks work, and that the dashboard and database are healthy, and it says what to change. The same check is under **Health check** at the bottom of the dashboard.
 
 - **The dashboard doesn't open.** Check `router.log` for `dashboard` lines. If port 47321 is taken, the next free port up to 47325 is used, and `/router` opens the right one.
 - **A session isn't routed.** Its model isn't in any chain. Pick a chain model, or add yours to `chains`.
