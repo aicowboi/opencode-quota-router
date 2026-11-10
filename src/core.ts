@@ -28,7 +28,8 @@ import { nextMonthUtc } from "./engine/resets.ts"
 import { findInChains, orderedChain, type Preferred } from "./engine/router.ts"
 import type { ModelInfo, ModelRef, PoolState, Signal, Tokens } from "./engine/types.ts"
 
-export const VERSION = "0.1.0"
+import { VERSION } from "./version.ts"
+export { VERSION }
 
 export type SessionState = {
   id: string

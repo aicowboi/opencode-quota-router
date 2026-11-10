@@ -9,6 +9,9 @@
     "./tui": "./src/tui.tsx",
     "./gui-experimental": "./dist/gui-experimental.cjs"
   },
+  "bin": {
+    "quota-router": "dist/cli.mjs"
+  },
   "files": [
     "src",
     "gui",
@@ -24,7 +27,7 @@
   "scripts": {
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "build": "vite build",
+    "build": "vite build && vite build -c vite.cli.config.ts",
     "prepack": "npm run build"
   },
   "peerDependencies": {

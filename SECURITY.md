@@ -14,6 +14,7 @@ quota-router runs entirely on your machine. It has no analytics and no server of
 | `.opencode/quota-router.json` in the session's directory or the nearest parent that has one | When a session runs there | Project rules. The file is treated as untrusted: at most 32 KB, parsed as JSON, and only able to shut providers out of routing. It cannot choose a chain, change a setting, or make quota-router contact anything. |
 | The list of installed and loaded models from Ollama or LM Studio on this machine | When one of them is connected (`local.healthCheck`, on by default) | Pass a server over while it is not running, and show what is loaded. The address is `127.0.0.1` unless you set another in `opencode.jsonc`; it cannot be changed from the dashboard. |
 | Rate-limit response headers from configured providers | `headers.observe` | Headroom before a limit is hit |
+| Claude Code's logs (`~/.claude/projects`), Codex's logs (`~/.codex/sessions`) and OpenCode's database, read-only | Only when you run `quota-router usage` or `limits` | Token counts, model names, times and project folders for the totals. Prompts and replies in those logs are skipped, not kept. What was read is cached in `~/.cache/quota-router`, created readable only by you |
 
 ## Where it sends data
 

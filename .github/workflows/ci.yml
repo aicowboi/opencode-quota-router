@@ -27,5 +27,6 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
-      - run: npm test
+      # Built first: a test runs the built command line (dist/ is not committed here; npm builds it when packing).
       - run: npm run build
+      - run: npm test

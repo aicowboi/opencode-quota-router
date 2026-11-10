@@ -265,6 +265,36 @@ Sessions move at their next turn after a schedule starts or ends, never in the m
 
 Commands that change a setting store it in the plugin's own database, on top of your `opencode.jsonc`, which is never written to.
 
+## Command line
+
+`quota-router` shows your usage and limits from a terminal, including tools other than OpenCode. Install it with `npm install -g opencode-quota-router` (or `npm link` in a clone). If you'd like it shorter, add `alias qr=quota-router` to your shell's profile.
+
+| Command | What it shows |
+|---|---|
+| `quota-router usage` | Tokens and their value at API prices from the logs Claude Code, Codex and OpenCode keep on this machine, by day. `--by model`, `--by source` or `--by project`; `--range today`, `30d`, `90d` or `all`; `--source codex` (or a comma-separated list); `--json` |
+| `quota-router limits` | Plan windows and when they reset: Codex from its own logs, Claude, ChatGPT and Copilot from the plugin while OpenCode runs |
+| `quota-router status` | What the plugin is doing now: each provider's state, running sessions, today's totals |
+| `quota-router prompt` | One short line for your shell prompt, the same as the terminal's status line (`claude-agent 62%`). Prints nothing when OpenCode isn't running |
+| `quota-router doctor` | The plugin's health check; exits with 1 when a check fails |
+| `quota-router open` | Opens the dashboard |
+
+`usage` and `limits` work without OpenCode running. They only read the logs, never change them, and keep a cache of what they've read in `~/.cache/quota-router` (readable only by you) so later runs take a fraction of a second. Values use the model prices in OpenCode's model catalogue (`~/.cache/opencode/models.json`); a model with no list price there is marked and left out of the value. Cursor keeps no token counts on disk, so it can't be included.
+
+To show the status line in your shell prompt, call `quota-router prompt` from it. It answers within half a second and prints nothing when there's nothing to show. For example, in zsh:
+
+```sh
+setopt prompt_subst
+RPROMPT='$(quota-router prompt)'
+```
+
+or as a [Starship](https://starship.rs) custom module:
+
+```toml
+[custom.quota]
+command = "quota-router prompt --no-color"
+when = true
+```
+
 ## Configuration reference
 
 All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in [`src/engine/config.ts`](src/engine/config.ts).
