@@ -521,7 +521,7 @@ export class Core {
 
   /** What pay-per-use providers have cost today and this month. Read from recorded requests, and cached briefly. */
   spend(now = Date.now()): Spend {
-    if (this.spendCache && now - this.spendCache.at < 5_000 && now >= this.spendCache.at) return this.spendCache.spend
+    if (this.spendCache && now - this.spendCache.at < 5_000 && now >= this.spendCache.at) return this.withPending(this.spendCache.spend)
     const today = localDay(now)
     const rows = this.store.all<{ p: string; d: number; m: number }>(
       "SELECT provider_id AS p, SUM(CASE WHEN day = ? THEN cost_actual ELSE 0 END) AS d, SUM(cost_actual) AS m FROM steps WHERE day >= ? AND cost_actual > 0 GROUP BY provider_id",
@@ -533,7 +533,17 @@ export class Core {
       spend.month[r.p] = r.m
     }
     this.spendCache = { at: now, spend }
-    return spend
+    return this.withPending(spend)
+  }
+
+  /** Settled spend plus the Anthropic API request still running. The cache holds the settled part only. */
+  private withPending(spend: Spend): Spend {
+    const pending = this.recorder.pendingAnthropic()
+    if (!pending || !(pending.usd > 0)) return spend
+    return {
+      day: { ...spend.day, anthropic: (spend.day.anthropic ?? 0) + pending.usd },
+      month: { ...spend.month, anthropic: (spend.month.anthropic ?? 0) + pending.usd },
+    }
   }
 
   /** Spend caps reached right now, by provider (`*` for the cap across all of them). */

@@ -13,6 +13,7 @@ import { aliasTarget, costOf, estimate } from "../src/engine/pricing.ts"
 import { healthGate, speedOf, summariseHealth, unreliable } from "../src/engine/health.ts"
 import { combineRules, matchProject, parseRules, ruledOut, rulesGate } from "../src/engine/rules.ts"
 import { activeSchedules, describeSchedule, describeWhen, parseClock, parseSchedules, scheduleFirst, scheduleGate } from "../src/engine/schedule.ts"
+import { inflightOf, ZERO_USAGE } from "../src/engine/inflight.ts"
 import { estimatePool, learnPool } from "../src/engine/learn.ts"
 import type { ModelInfo } from "../src/engine/types.ts"
 
@@ -562,6 +563,30 @@ test("learned pool: the size of a pool from the times it ran out", () => {
   assert.equal(out?.exhausted, true)
   assert.equal(out?.pct, 100)
   assert.equal(out?.resetAt, now + 6 * HOUR)
+})
+
+test("Anthropic API in flight: live tokens are priced, and a reported cost replaces the estimate", () => {
+  const price = (tokens: { input: number; output: number; reasoning: number; cache: { read: number; write: number } }) => (tokens.output * 15 + tokens.input * 3) / 1e6
+  const tokens = (input: number, output: number) => ({ input, output, reasoning: 0, cache: { read: 0, write: 0 } })
+  // No cost on the event: the model's list price times the live tokens.
+  const est = inflightOf({ cost: 0, tokens: tokens(1_000_000, 100_000) }, ZERO_USAGE, price)
+  assert.equal(est.basis, "estimated")
+  assert.equal(est.usd, 4.5)
+  // A cost on the event replaces the estimate. The finished request is what gets stored.
+  const reported = inflightOf({ cost: 1.25, tokens: tokens(1_000_000, 100_000) }, ZERO_USAGE, price)
+  assert.equal(reported.basis, "reported")
+  assert.equal(reported.usd, 1.25)
+  assert.equal(reported.estimate, 4.5)
+  // A session running total: only the growth since the step started counts.
+  const baseline = { cost: 2, tokens: tokens(2_000_000, 0) }
+  const grown = inflightOf({ cost: 2.4, tokens: tokens(2_000_000, 20_000) }, baseline, price)
+  assert.ok(Math.abs(grown.usd - 0.4) < 1e-9)
+  assert.equal(grown.tokens.output, 20_000)
+  assert.equal(grown.tokens.input, 0)
+  // A snapshot smaller than the baseline is the step's own tokens, not a running total.
+  const own = inflightOf({ cost: 0, tokens: tokens(100, 50) }, baseline, price)
+  assert.equal(own.tokens.input, 100)
+  assert.equal(own.basis, "estimated")
 })
 
 test("calibrated pool: a console reading estimates the week, and running out replaces it", () => {

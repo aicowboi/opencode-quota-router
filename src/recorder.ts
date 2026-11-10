@@ -1,5 +1,6 @@
 // Records OpenCode session events into the local store and keeps a live view of running work.
 import { localDay, type Store } from "./db.ts"
+import { inflightOf, ZERO_USAGE, type Inflight, type UsageSnapshot } from "./engine/inflight.ts"
 import { markDirty } from "./maintenance.ts"
 import type { ModelRef, Tokens } from "./engine/types.ts"
 
@@ -23,15 +24,44 @@ const tokensOf = (t: any): Tokens => ({
   cache: { read: Number(t?.cache?.read ?? 0), write: Number(t?.cache?.write ?? 0) },
 })
 
+export type PendingSpend = Inflight & { providerID: string; modelID: string }
+
 export class Recorder {
   readonly live = new Map<string, LiveExecution>()
   private seen = new Set<string>()
   private known = new Set<string>()
+  /** Last live usage snapshot per session, so the next step can tell a running total from a step's own tokens. */
+  private usage = new Map<string, UsageSnapshot>()
+  /** Usage at the start of the current Anthropic API step. */
+  private baseline = new Map<string, UsageSnapshot>()
+  /** Anthropic API usage not yet on a finished step. */
+  private inflight = new Map<string, PendingSpend>()
   private store: Store
   private price: Pricer
   private ensureSession: (id: string) => void
   private changed: (kind: string) => void
   private onFallback: (sessionID: string) => boolean
+
+  /** Anthropic API spend still in a running request, priced from its live tokens and reconciled when the request ends. */
+  pendingAnthropic(): PendingSpend | undefined {
+    let usd = 0
+    let estimate = 0
+    let reported = 0
+    let estimated = false
+    let modelID = ""
+    let tokens: PendingSpend["tokens"] | undefined
+    for (const p of this.inflight.values()) {
+      if (p.providerID !== "anthropic" || !(p.usd > 0)) continue
+      usd += p.usd
+      estimate += p.estimate
+      reported += p.reported
+      if (p.basis === "estimated") estimated = true
+      modelID = p.modelID
+      tokens = p.tokens
+    }
+    if (!(usd > 0) || !tokens) return undefined
+    return { providerID: "anthropic", modelID, tokens, estimate, reported, usd, basis: estimated || !(reported > 0) ? "estimated" : "reported" }
+  }
 
   constructor(store: Store, price: Pricer, ensureSession: (id: string) => void, changed: (kind: string) => void, onFallback: (sessionID: string) => boolean = () => false) {
     this.onFallback = onFallback
@@ -39,6 +69,35 @@ export class Recorder {
     this.price = price
     this.ensureSession = ensureSession
     this.changed = changed
+  }
+
+  private clearInflight(sessionID: string) {
+    this.inflight.delete(sessionID)
+  }
+
+  /** Usage already stored for this session's Anthropic API requests, the baseline when no live snapshot has arrived. */
+  private settledAnthropic(sessionID: string): UsageSnapshot {
+    const row = this.store.get<{ input: number; output: number; reasoning: number; cache_read: number; cache_write: number; cost: number }>(
+      `SELECT COALESCE(SUM(input), 0) AS input, COALESCE(SUM(output), 0) AS output, COALESCE(SUM(reasoning), 0) AS reasoning,
+              COALESCE(SUM(cache_read), 0) AS cache_read, COALESCE(SUM(cache_write), 0) AS cache_write, COALESCE(SUM(cost_actual), 0) AS cost
+       FROM steps WHERE session_id = ? AND provider_id = 'anthropic' AND status != 'running'`,
+      sessionID,
+    )
+    return {
+      cost: row?.cost ?? 0,
+      tokens: { input: row?.input ?? 0, output: row?.output ?? 0, reasoning: row?.reasoning ?? 0, cache: { read: row?.cache_read ?? 0, write: row?.cache_write ?? 0 } },
+    }
+  }
+
+  private noteUsage(sessionID: string, data: Record<string, any>) {
+    const step = this.live.get(sessionID)?.step
+    if (step?.model?.providerID !== "anthropic" || !data.tokens) return
+    const snap: UsageSnapshot = { cost: Number(data.cost ?? 0), tokens: tokensOf(data.tokens) }
+    const baseline = this.baseline.get(sessionID) ?? this.settledAnthropic(sessionID)
+    this.usage.set(sessionID, snap)
+    const flight = inflightOf(snap, baseline, (tokens) => this.price(step.model.providerID, step.model.id, tokens, 0).equivalent)
+    if (flight.usd <= 0 && flight.estimate <= 0) this.inflight.delete(sessionID)
+    else this.inflight.set(sessionID, { ...flight, providerID: step.model.providerID, modelID: step.model.id })
   }
 
   /** Upsert session details fetched from OpenCode for sessions created before the plugin started. */
@@ -110,6 +169,9 @@ export class Recorder {
       case "session.deleted":
         this.store.run("UPDATE sessions SET deleted_at = ? WHERE id = ?", at, sid)
         this.live.delete(sid!)
+        this.clearInflight(sid!)
+        this.usage.delete(sid!)
+        this.baseline.delete(sid!)
         return this.changed("session")
 
       case "session.execution.started":
@@ -132,6 +194,7 @@ export class Recorder {
         this.store.run("UPDATE tools SET status = 'interrupted', ended_at = ? WHERE session_id = ? AND ended_at IS NULL", at, sid)
         markDirty(this.store, sid, at)
         this.live.delete(sid!)
+        this.clearInflight(sid!)
         return this.changed("live")
       }
 
@@ -150,7 +213,13 @@ export class Recorder {
         const e = this.exec(sid!, at)
         e.step = { id: ev.id, model, startedAt: started, agent: d.agent }
         e.retry = undefined
+        if (model?.providerID === "anthropic") this.baseline.set(sid!, this.usage.get(sid!) ?? this.settledAnthropic(sid!))
+        else this.clearInflight(sid!)
         return this.changed("live")
+      }
+      case "session.usage.updated": {
+        this.noteUsage(sid!, d)
+        return this.inflight.has(sid!) ? this.changed("usage") : undefined
       }
       case "session.step.ended":
       case "session.step.failed": {
@@ -171,6 +240,9 @@ export class Recorder {
         )
         markDirty(this.store, sid, row?.started_at ?? at)
         if (e) e.step = undefined
+        // The finished request is now in the store. Drop the live estimate so it is not counted twice.
+        this.clearInflight(sid!)
+        if (row?.provider_id === "anthropic") this.usage.set(sid!, this.settledAnthropic(sid!))
         return this.changed("usage")
       }
       case "session.retry.scheduled": {
@@ -179,6 +251,7 @@ export class Recorder {
         if (e.step) {
           this.failStep(e.step.id, sid!, at, d.error)
           e.step = undefined
+          this.clearInflight(sid!)
         }
         return this.changed("live")
       }

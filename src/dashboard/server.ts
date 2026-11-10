@@ -128,7 +128,7 @@ export function buildState(core: Core) {
     openrouter: { ok: core.openrouter.ok, at: core.openrouter.at, message: core.openrouter.message, data: core.openrouter.data, enabled: core.config.openrouter.usageProbe },
     chatgpt: { active: core.chatgptActive(), at: core.chatgpt.at, data: core.chatgpt.data, cutoverAtPct: core.config.chatgpt.cutoverAtPct },
     saved: core.saved(now),
-    spend: { ...core.config.spend, ...core.spend(now), blocked: core.spendBlocks(now) },
+    spend: { ...core.config.spend, ...core.spend(now), blocked: core.spendBlocks(now), pending: core.recorder.pendingAnthropic() },
     suggestions: core.suggestions(),
     updates: core.updates(),
     replaced: core.chainReplacements(),

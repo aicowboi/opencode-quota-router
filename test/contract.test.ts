@@ -43,6 +43,7 @@ ok<Fits<"model", keyof Data<"session.model.selected">>>()
 ok<Fits<"sessionID", keyof Data<"session.step.started">>>()
 ok<Fits<"error", keyof Data<"session.step.failed">>>()
 ok<Fits<"tokens" | "cost", keyof Data<"session.step.ended">>>()
+ok<Fits<"tokens" | "cost", keyof Data<"session.usage.updated">>>()
 
 void ({} as Core)
 
