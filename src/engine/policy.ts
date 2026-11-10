@@ -2,7 +2,7 @@
 // rules. Each policy is a pure function from a chain entry to a block (or nothing), and the router asks them in order.
 import type { Config } from "./config.ts"
 import { nextLocalDay, nextLocalMonth } from "./resets.ts"
-import type { ModelRef } from "./types.ts"
+import type { ModelInfo, ModelRef } from "./types.ts"
 
 /**
  * Why an entry is passed over, and when the policy lifts. The router never waits for a policy to lift: a spend cap or
@@ -28,6 +28,23 @@ export function composeGates(gates: Array<Gate | undefined>): Gate | undefined {
       soft ??= block
     }
     return soft
+  }
+}
+
+/** Copilot bills AI credits by tokens, at a hundred credits to the dollar of the model's list price. */
+export const COPILOT_CREDITS_PER_USD = 100
+
+/**
+ * Copilot economy: near the end of the monthly allowance, the models that use credits fastest are passed over on
+ * Copilot while another entry in the chain can run. A soft block, so Copilot is still used when it is all there is.
+ */
+export function economyGate(config: Config, usedPct: number | undefined, models: Map<string, ModelInfo>): Gate | undefined {
+  const { economyAtPct, economyOutputPrice } = config.copilot
+  if (!(economyAtPct > 0) || usedPct === undefined || usedPct < economyAtPct) return undefined
+  return (entry) => {
+    if (entry.providerID !== "github-copilot") return undefined
+    const price = Math.max(0, ...(models.get(`${entry.providerID}/${entry.id}`)?.cost ?? []).map((t) => t.output))
+    return price >= economyOutputPrice ? { reason: `Copilot allowance at ${Math.round(usedPct)}%: what is left is kept for cheaper models`, soft: true } : undefined
   }
 }
 

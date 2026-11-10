@@ -5,7 +5,7 @@ import { checkSetting, loadConfig, overlay, refKey, refLabel, type Config } from
 import { modelPools } from "./engine/classify.ts"
 import { localDay, Store } from "./db.ts"
 import { dataDir, Logger } from "./log.ts"
-import { composeGates, saveGate, spendBlocks, spendGate, type Gate, type Saved, type Spend } from "./engine/policy.ts"
+import { composeGates, economyGate, saveGate, spendBlocks, spendGate, type Gate, type Saved, type Spend } from "./engine/policy.ts"
 import { PoolStore } from "./engine/pools.ts"
 import { estimate } from "./engine/pricing.ts"
 import { fetchClaudeUsage, interpretClaudeUsage, readClaudeToken, type ClaudeUsage } from "./probes/claude.ts"
@@ -219,6 +219,7 @@ export class Core {
   policies: Array<(s?: SessionState) => Gate | undefined> = [
     () => spendGate(this.config, this.spend(), Date.now()),
     () => saveGate(this.saved(), Date.now()),
+    () => economyGate(this.config, this.copilot.data && this.copilot.data.entitlement > 0 ? (this.copilot.data.used / this.copilot.data.entitlement) * 100 : undefined, this.models),
     (s) => (this.config.pace.enabled && s && this.isLight(s) ? paceGate(this.config, this.forecasts(), true, Date.now()) : undefined),
   ]
 

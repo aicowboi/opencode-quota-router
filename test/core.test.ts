@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { classify, modelPools } from "../src/engine/classify.ts"
 import { checkSetting, loadConfig, overlay, parseRef, withSetting } from "../src/engine/config.ts"
-import { composeGates, parseUntil, saveGate, spendBlocks, spendGate } from "../src/engine/policy.ts"
+import { composeGates, economyGate, parseUntil, saveGate, spendBlocks, spendGate } from "../src/engine/policy.ts"
 import { forecast, paceGate, type WindowForecast } from "../src/engine/forecast.ts"
 import { parseDuration, parseResetText, parseRetryAfter, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
@@ -393,4 +393,17 @@ test("pace guard: light work prefers another provider, and still uses the plan w
   const both = composeGates([gate, saveGate({ "claude-agent": NOW + 1000 }, NOW)])!
   assert.equal(both({ providerID: "claude-agent", id: "opus" })?.soft, undefined)
   assert.equal(route({ config, pools, models: MODELS, preferred, mode: "failover", gate: both }).target, undefined)
+})
+
+test("Copilot economy: near the end of the allowance, expensive models go elsewhere when they can", () => {
+  const config = cfg({ copilot: { economyAtPct: 90 } })
+  assert.equal(economyGate(cfg(), 99, MODELS), undefined)
+  assert.equal(economyGate(config, 89, MODELS), undefined)
+  assert.equal(economyGate(config, undefined, MODELS), undefined)
+  const priced = new Map(MODELS).set("github-copilot/claude-opus-5.5", { ...MODELS.get("github-copilot/claude-opus-5.5")!, cost: [{ input: 4, output: 20 }] })
+  const gate = economyGate(config, 92, priced)!
+  assert.deepEqual(gate({ providerID: "github-copilot", id: "claude-opus-5.5" }), { reason: "Copilot allowance at 92%: what is left is kept for cheaper models", soft: true })
+  assert.equal(gate({ providerID: "anthropic", id: "claude-opus-5-5" }), undefined)
+  assert.equal(gate({ providerID: "github-copilot", id: "not-priced" }), undefined)
+  assert.equal(economyGate(cfg({ copilot: { economyAtPct: 90, economyOutputPrice: 50 } }), 92, priced)!({ providerID: "github-copilot", id: "claude-opus-5.5" }), undefined)
 })

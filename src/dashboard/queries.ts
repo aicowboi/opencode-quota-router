@@ -1,5 +1,6 @@
 // Read models for the dashboard. Ranges longer than a day read daily rollups plus today's raw rows, so queries stay
 // fast however much history accumulates. Lists are paginated with keyset cursors.
+import { COPILOT_CREDITS_PER_USD } from "../engine/policy.ts"
 import { localDay, type Store } from "../db.ts"
 import { TOOLS_SELECT, USAGE_SELECT } from "../maintenance.ts"
 
@@ -284,6 +285,13 @@ export function routingEvents(store: Store, q: { day: string; trigger: string; f
   const more = rows.length > limit
   const page = rows.slice(0, limit)
   return { rows: page, next: more ? page.at(-1)?.id : undefined }
+}
+
+/** Copilot AI credits by model since a time, estimated from recorded tokens at each model's list price. */
+export function copilotCredits(store: Store, fromMs: number, limit = 4) {
+  return store
+    .all<{ model: string; usd: number }>("SELECT model_id AS model, SUM(cost_equiv) AS usd FROM steps WHERE provider_id = 'github-copilot' AND started_at >= ? GROUP BY model_id HAVING usd > 0 ORDER BY usd DESC LIMIT ?", fromMs, limit)
+    .map((r) => ({ model: r.model, credits: Math.round(r.usd * COPILOT_CREDITS_PER_USD) }))
 }
 
 export function usageHistory(store: Store, provider: string, fromMs: number) {

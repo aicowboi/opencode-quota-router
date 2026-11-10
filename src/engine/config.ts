@@ -61,6 +61,13 @@ export type Config = {
     /** Reserve kept back as a fraction of the monthly entitlement, to absorb in-flight requests. */
     reserveFraction: number
     /**
+     * Economy: once this much of the monthly allowance is used (percent, 0 for never), models priced at
+     * `economyOutputPrice` dollars per million output tokens or more are passed over on Copilot when another entry
+     * can run, so the credits that are left last longer on cheaper models.
+     */
+    economyAtPct: number
+    economyOutputPrice: number
+    /**
      * Included AI credits per month for this seat. 0 means use the plan's allowance (Business 1,900, Enterprise 3,900).
      * Business and Enterprise pool credits across the organisation; staying within your own share means your usage never
      * causes paid additional credits.
@@ -172,7 +179,7 @@ export const DEFAULTS: Config = {
   contextFit: { safetyFactor: 1.15 },
   pace: { enabled: false, lightAgents: [] },
   claude: { usageProbe: false, avoidUsageCredits: true, cutoverAtPct: 98, warnAtPct: 85 },
-  copilot: { usageProbe: false, avoidAdditionalCredits: true, reserveFraction: 0.01, monthlyCredits: 0 },
+  copilot: { usageProbe: false, avoidAdditionalCredits: true, reserveFraction: 0.01, monthlyCredits: 0, economyAtPct: 0, economyOutputPrice: 15 },
   probes: { activeIntervalMs: 3 * 60_000, idleIntervalMs: 15 * 60_000, maxAgeAtTurnMs: 60_000 },
   headers: { observe: ["anthropic", "github-copilot"], warnRemainingPct: 5 },
   dashboard: { enabled: true, port: 47321, host: "127.0.0.1", menubar: true },

@@ -238,6 +238,7 @@ All options go under the plugin's `options` in `opencode.jsonc`. Defaults are in
 | `claude.avoidUsageCredits` / `cutoverAtPct` | true / 98 | Leave the subscription before usage credits are drawn |
 | `copilot.usageProbe` | false | Check Copilot's monthly allowance (see step 4) |
 | `copilot.avoidAdditionalCredits` / `reserveFraction` | true / 0.01 | Leave Copilot before paid credits beyond the allowance |
+| `copilot.economyAtPct` / `economyOutputPrice` | 0 (off) / 15 | Once this much of the allowance is used, models priced at this many dollars per million output tokens or more go to another provider when one can run them |
 | `copilot.monthlyCredits` | 0 (plan default) | Your included credits on a pooled Business or Enterprise seat |
 | `pace.enabled` | false | Pace guard: subagents pass over a plan that is on pace to run out before it resets. Needs a usage check (step 4) or a ChatGPT sign-in |
 | `pace.lightAgents` | none | Agents whose sessions are treated like subagents by the pace guard, for example `["explore"]` |

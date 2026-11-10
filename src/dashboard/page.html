@@ -424,6 +424,10 @@ function renderLadder() {
         const proj = used / Math.max(0.03, (Date.now() - mStart) / (mEnd - mStart))
         cap += gauge(q.name === "ai_credits" ? "Credits" : "Requests", avail ? used / avail * 100 : 0, fmtInt(used) + " / " + fmtInt(avail), col, Math.round(100 - s.copilot.reserveFraction * 100))
         cap += '<div class="note">' + fmtInt(Math.max(0, avail - used)) + " left · on pace for " + '<span class="' + (proj > avail ? "st-warn" : "") + '">' + fmtInt(proj) + "</span> by " + esc(new Date(mEnd - 1).toLocaleDateString([], { day: "numeric", month: "short" })) + (q.name === "ai_credits" ? " · your share of the " + esc(q.plan || "") + " pool" : "") + (q.overageUsed ? ' · <span class="st-bad">' + fmtInt(q.overageUsed) + " beyond allowance</span>" : "") + "</div>"
+        cap += paceNotes("github-copilot")
+        // Token-based billing: credits follow each model's list price, so the split by model is an estimate from recorded tokens.
+        if (q.name === "ai_credits" && cp.byModel && cp.byModel.length) cap += '<div class="note" title="Estimated from the tokens recorded here, at each model\'s list price">Credits by model this month: ' + cp.byModel.map((m) => esc(m.model) + " ~" + fmtInt(m.credits)).join(" · ") + "</div>"
+        if (cp.economyAtPct && avail && used / avail * 100 >= cp.economyAtPct) cap += '<div class="note"><span class="st-info">Economy</span> · past ' + esc(cp.economyAtPct) + "%, the most expensive models are routed elsewhere when another provider can run them</div>"
       } else cap = '<div class="note">' + esc(cp.message || (cp.enabled ? "Waiting for the first usage check" : "Usage checks are off")) + "</div>"
     } else if (p.id === "xai") {
       cap = '<div class="gauge"><span class="lab">Week</span><span class="track unknown"></span><span class="val muted">not reported</span></div><div class="note">xAI publishes no usage figures; limits are learned from errors.</div>'
