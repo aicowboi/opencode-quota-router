@@ -43,7 +43,7 @@ quota-router uses it in this order:
 
 ## Requirements
 
-- **OpenCode V2**, 2.2 or later. The menu bar item needs OpenCode Desktop.
+- **OpenCode V2**, 2.2 or later. The menu bar item needs OpenCode Desktop. See the [support matrix](docs/support.md).
 - **Node.js 24 or later and npm**, only to install and build.
 - **At least two OpenCode providers connected**, for example a Claude subscription and an API key.
 
@@ -391,7 +391,7 @@ npm run build      # menu bar bundle
 
 ## How it's built
 
-See [docs/how-it-works.md](docs/how-it-works.md) for the design: the error classifier, per-pool health shared across sessions, the router, the usage checks and the storage that keeps years of history small.
+[docs/support.md](docs/support.md) lists the OpenCode, Node and operating system versions it is tested on. See [docs/how-it-works.md](docs/how-it-works.md) for the design: the error classifier, per-pool health shared across sessions, the router, the usage checks and the storage that keeps years of history small.
 
 ## License
 
