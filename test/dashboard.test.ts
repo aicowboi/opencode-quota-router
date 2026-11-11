@@ -171,3 +171,82 @@ test("dashboard: notification titles and bodies stay escaped, including the hide
   assert.match(p.list.innerHTML, /&lt;img onerror=&quot;bad&quot;&gt;/)
   assert.doesNotMatch(p.list.innerHTML, /<script>|<img /)
 })
+
+async function intelligentPage(storage = new Map<string, string>(), existingSetup = true) {
+  const nodes = new Map<string, any>(), requests: string[] = [], messages: string[] = []
+  const document: { activeElement: any } = { activeElement: null }
+  const control = (id: string, attrs = ""): any => ({
+    id, hidden: /\shidden(?:\s|$)/.test(attrs), disabled: /\sdisabled(?:\s|$)/.test(attrs),
+    attrs: new Map([...attrs.matchAll(/([\w-]+)="([^"]*)"/g)].map((m) => [m[1], m[2]])),
+    focus() { document.activeElement = this }, scrollIntoView() {},
+  })
+  const root = Object.assign(control("intelligent"), { contains: (el: any) => !!el && el.id !== "menuBtn" && nodes.get(el.id) === el, querySelector: () => null })
+  let markup = ""
+  Object.defineProperty(root, "innerHTML", {
+    get: () => markup,
+    set: (value: string) => {
+      markup = value
+      for (const id of nodes.keys()) if (id !== "intelligent" && id !== "menuBtn") nodes.delete(id)
+      for (const m of value.matchAll(/<[a-z]+([^>]*\bid="([^"]+)"[^>]*)>/g)) nodes.set(m[2]!, control(m[2]!, m[1]))
+    },
+  })
+  nodes.set("intelligent", root); nodes.set("menuBtn", control("menuBtn"))
+  const data = { available: true, mode: "intelligent", onboarded: existingSetup, existingSetup, analyzers: [], providers: 0, models: 0 }
+  const context = createContext({
+    $: (id: string) => nodes.get(id), document,
+    localStorage: { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => storage.set(k, v), removeItem: (k: string) => storage.delete(k) },
+    api: async (url: string) => { requests.push(url); return data },
+    announce: (text: string) => messages.push(text),
+    fetch: () => { throw new Error("Display preferences must not make a write or AI request") },
+    PKIND: {},
+  })
+  runInContext(script.split("\n").find((line) => line.startsWith("const esc ="))!, context)
+  runInContext(between("// ---------- intelligent routing setup ----------", "// ---------- totals ----------"), context)
+  await runInContext("loadIntelligent()", context)
+  return { root, storage, data, requests, messages, node: (id: string) => nodes.get(id), focused: () => document.activeElement?.id,
+    reload: () => runInContext("loadIntelligent()", context), show: () => runInContext("setIntelligentHidden(false)", context) }
+}
+
+test("dashboard: intelligent setup starts compact for existing users, expanded for fresh onboarding", async () => {
+  const existing = await intelligentPage()
+  assert.equal(existing.node("intelligentBody").hidden, true)
+  assert.equal(existing.node("intelligentToggle").attrs.get("aria-expanded"), "false")
+  const fresh = await intelligentPage(new Map(), false)
+  assert.equal(fresh.node("intelligentBody").hidden, false)
+})
+
+test("dashboard: intelligent expansion and collapse persist across reloads without changing routing", async () => {
+  const p = await intelligentPage()
+  p.node("intelligentToggle").onclick()
+  assert.equal(p.node("intelligentBody").hidden, false)
+  assert.equal(p.storage.get("qr.fold.intelligent"), "0")
+  assert.equal(p.focused(), "intelligentToggle")
+  const reloaded = await intelligentPage(p.storage)
+  assert.equal(reloaded.node("intelligentBody").hidden, false)
+  reloaded.node("intelligentToggle").onclick()
+  await reloaded.reload()
+  assert.equal(reloaded.node("intelligentBody").hidden, true)
+  assert.equal(reloaded.data.mode, "intelligent")
+  assert.ok(reloaded.requests.every((url) => url === "/api/intelligent"))
+})
+
+test("dashboard: intelligent setup can be entirely hidden and restored from More actions", async () => {
+  const p = await intelligentPage()
+  p.node("intelligentHide").onclick()
+  assert.equal(p.root.hidden, true)
+  assert.equal(p.root.innerHTML, "")
+  assert.equal(p.storage.get("qr.hide.intelligent"), "1")
+  assert.equal(p.focused(), "menuBtn")
+  const reloaded = await intelligentPage(p.storage)
+  assert.equal(reloaded.root.hidden, true)
+  await reloaded.reload()
+  assert.equal(reloaded.root.hidden, true)
+  reloaded.show()
+  assert.equal(reloaded.root.hidden, false)
+  assert.equal(reloaded.node("intelligentBody").hidden, true)
+  assert.equal(reloaded.storage.has("qr.hide.intelligent"), false)
+  assert.equal(reloaded.focused(), "intelligentToggle")
+  assert.equal(reloaded.data.mode, "intelligent")
+  assert.match(html, /Show intelligent routing/)
+  assert.match(html, /b\.dataset\.a === "intelligent-visibility"\) setIntelligentHidden\(!intelligentHidden\)/)
+})

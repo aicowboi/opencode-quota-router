@@ -248,6 +248,8 @@ The analysis sends only provider/model metadata and your routing goal to the sel
 
 The accepted preset is an additional route with its own order, stored locally under `quota-router/intelligent`; your manual chains, provider priorities, spend caps and agent/project rules are kept. **Switch back to manual routes** removes the preset, without editing `opencode.jsonc` or moving pinned sessions. Models outside the preset still use their manual routes, or are left alone if none matches.
 
+The Intelligent routing section starts collapsed on existing setups. **Expand/Collapse** remembers your choice; **Hide section** removes it entirely, and **⋯ → Show intelligent routing** brings it back. These browser-only display choices do not enable, disable or change routing.
+
 Default protection checks the root `model` in local OpenCode configuration as well as model-registry overrides. If alternate, managed or unreadable sources make the default uncertain, recommendations remain review-only: no preset or default is applied until it can be verified.
 
 **Model routes & suggestions:** a route (a “chain” in settings) lists alternative models for similar work. Expand a route to see the order requests actually try, what is disconnected and skipped, and the exact **after** preview for each suggestion. **Add to route** follows provider rank, so the new model may come before an existing one; **Use newer model** replaces one entry. Price matches are rough comparisons, not quality guarantees, and paid alternatives are labelled. Nothing changes until accepted. Additions can be removed, updates undone, and dismissed suggestions brought back with **Review dismissed suggestions**.

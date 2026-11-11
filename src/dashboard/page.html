@@ -463,14 +463,14 @@ function renderMast() {
 function renderMenu() {
   const m = $("menu")
   m.innerHTML = '<button data-a="probe">Check usage now</button><button data-a="pause">' + (state && state.paused ? "Resume routing" : "Pause routing") + '</button><button data-a="dry">' + (state && state.dryRun ? "End dry run" : "Start a dry run") + "</button><hr>" +
-    '<a href="#settings">Settings</a><hr>' +
+    '<a href="#settings">Settings</a><button data-a="intelligent-visibility">' + (intelligentHidden ? "Show intelligent routing" : "Hide intelligent routing") + '</button><hr>' +
     '<div class="label">Export as CSV (' + esc(RANGE_TEXT[range]) + ")</div>" +
     [["steps", "Requests"], ["sessions", "Sessions"], ["daily", "Daily totals"], ["routing", "Routing changes"], ["executions", "Executions"]]
       .map(([t, l]) => '<a href="/api/export.csv?table=' + t + "&range=" + range + '">' + l + "</a>").join("")
   for (const b of m.querySelectorAll("button")) b.onclick = async () => {
     closeMenu()
     if (b.dataset.a === "probe") await act({ action: "probe" })
-
+    else if (b.dataset.a === "intelligent-visibility") setIntelligentHidden(!intelligentHidden)
     else if (b.dataset.a === "dry") await act({ action: "dry-run", on: !(state && state.dryRun) })
     else await act({ action: state && state.paused ? "resume" : "pause" })
   }
@@ -642,18 +642,32 @@ function renderSuggest() {
 
 // ---------- intelligent routing setup ----------
 let intelligent = null, intelligentBusy = false, intelligentError = "", intelligentInitialized = false, analysisModel = "", routingGoal = "balanced", includeMetered = false, paidAnalysis = false
-
+let intelligentCollapsePreference = localStorage.getItem("qr.fold.intelligent"), intelligentCollapsed = intelligentCollapsePreference === "1", intelligentHidden = localStorage.getItem("qr.hide.intelligent") === "1"
+function setIntelligentCollapsed(collapsed) {
+  intelligentCollapsed = collapsed; intelligentCollapsePreference = collapsed ? "1" : "0"
+  try { localStorage.setItem("qr.fold.intelligent", intelligentCollapsePreference) } catch {}
+  renderIntelligent(); $("intelligentToggle")?.focus({ preventScroll: true })
+  announce("Intelligent routing section " + (collapsed ? "collapsed." : "expanded."))
+}
+function setIntelligentHidden(hidden) {
+  intelligentHidden = hidden
+  try { if (hidden) localStorage.setItem("qr.hide.intelligent", "1"); else localStorage.removeItem("qr.hide.intelligent") } catch {}
+  renderIntelligent()
+  if (hidden) $("menuBtn").focus({ preventScroll: true })
+  else { $("intelligent").scrollIntoView({ block: "nearest" }); $("intelligentToggle")?.focus({ preventScroll: true }) }
+  announce(hidden ? "Intelligent routing section hidden. Restore it from More actions. Routing is unchanged." : "Intelligent routing section shown. Routing is unchanged.")
+}
 function renderIntelligent() {
   const el = $("intelligent"), d = intelligent
-
-
+  el.hidden = intelligentHidden
+  if (intelligentHidden) { el.innerHTML = ""; return }
   const focused = el.contains(document.activeElement) ? document.activeElement.id : ""
   if (!d) { el.innerHTML = intelligentError ? '<div class="setup"><h3>Intelligent routing</h3><p>' + esc(intelligentError) + '</p><button class="btn-sm" id="intelligentRetry">Try again</button></div>' : ""; if ($("intelligentRetry")) $("intelligentRetry").onclick = loadIntelligent; return }
   if (!d.analyzers.some((m) => m.ref === analysisModel)) analysisModel = d.suggestedAnalyzer || ""
   const selected = d.analyzers.find((m) => m.ref === analysisModel), busy = intelligentBusy || d.analyzing, fresh = !d.existingSetup && !d.onboarded
   const plan = d.candidate || d.active, applied = plan && d.active && plan.id === d.active.id
   const entries = plan ? plan.entries.map((e) => ({ ...e, ...(d.analyzers.find((m) => m.ref === e.ref.replace(/#.*$/, "")) || {}), ref: e.ref })) : []
-  el.innerHTML = '<div class="setup" aria-busy="' + busy + '"><div class="setup-head"><h3>Intelligent routing</h3><span class="tag">' + (d.mode === "intelligent" ? "On" : fresh ? "Recommended setup" : "Optional improvement") + '</span><span class="spacer"></span><span class="caption">' + d.providers + " connected providers · " + d.models + ' coding models</span></div><div id="intelligentBody"><p>Let a connected AI model build a sensible default and fallback route from the models you actually have. Choose your goal; review the explanation and change it whenever you want.</p>' +
+  el.innerHTML = '<div class="setup" aria-busy="' + busy + '"><div class="setup-head"><h3>Intelligent routing</h3><span class="tag">' + (d.mode === "intelligent" ? "On" : fresh ? "Recommended setup" : "Optional improvement") + '</span><span class="spacer"></span><span class="caption">' + d.providers + " connected providers · " + d.models + ' coding models</span><button class="linkish" id="intelligentToggle" aria-controls="intelligentBody" aria-expanded="' + !intelligentCollapsed + '" aria-label="' + (intelligentCollapsed ? "Expand" : "Collapse") + ' intelligent routing">' + (intelligentCollapsed ? "Expand" : "Collapse") + '</button><button class="linkish" id="intelligentHide">Hide section</button></div><div id="intelligentBody"' + (intelligentCollapsed ? " hidden" : "") + '><p>Let a connected AI model build a sensible default and fallback route from the models you actually have. Choose your goal; review the explanation and change it whenever you want.</p>' +
     (d.configuredDefault ? '<p>Your configured default, <span class="model">' + esc(d.configuredDefault) + '</span>, is kept. Analysis suggests alternatives around it; nothing is applied automatically.</p>' : fresh ? '<p>There is no configured default. Finishing this setup adopts the validated recommendation for new sessions. You can choose manual routes instead.</p>' : '<p>Your current setup stays in place until you apply a recommendation.</p>') +
     '<div class="setup-fields"><div><label for="analysisModel">AI model used for this one analysis</label><select id="analysisModel" aria-describedby="analysisPrivacy"' + (busy ? " disabled" : "") + '>' + (d.analyzers.length ? d.analyzers.map((m) => '<option value="' + esc(m.ref) + '"' + (m.ref === analysisModel ? " selected" : "") + (m.blocked ? " disabled" : "") + '>' + esc(pname(providerOf(m.ref)) + " · " + m.name + " · " + (PKIND[m.kind] || m.kind) + (m.blocked ? " · unavailable" : "")) + "</option>").join("") : '<option value="">No available coding models</option>') + '</select></div><div><label for="routingGoal">What should the route favour?</label><select id="routingGoal"' + (busy ? " disabled" : "") + '>' + [["balanced", "Balanced coding & allowance use"], ["quality", "Best coding quality"], ["economy", "Make included allowances last"]].map(([v, label]) => '<option value="' + v + '"' + (v === routingGoal ? " selected" : "") + '>' + label + "</option>").join("") + '</select></div></div>' +
     '<label class="option"><input type="checkbox" id="includeMetered"' + (includeMetered ? " checked" : "") + (busy ? " disabled" : "") + '>Allow additional pay-per-use models as last-resort alternatives. Existing spending caps still apply.</label>' +
@@ -663,8 +677,8 @@ function renderIntelligent() {
     (intelligentError || d.error ? '<p class="error" role="alert">' + esc(intelligentError || d.error) + '</p>' : "") +
     '<div class="route-actions"><button class="btn-primary" id="analyzeRouting"' + (busy || !d.available || !selected || selected.blocked || (selected.kind === "metered" && !paidAnalysis) ? " disabled" : "") + '>' + (busy ? "Analyzing your setup…" : fresh ? "Set up intelligent routing" : plan ? "Analyze again" : "Suggest a routing improvement") + '</button>' + (!d.active && !d.onboarded ? '<button class="linkish" id="keepManual"' + (busy ? " disabled" : "") + '>Keep manual routing</button>' : "") + '</div>' +
     (plan ? '<div class="recommended"><div class="setup-head"><h3>' + (applied ? "Your active intelligent route" : "Recommended route · review before applying") + '</h3><span class="caption">Analyzed ' + esc(fmtWhen(plan.at)) + " · " + esc(plan.goal) + '</span></div><p>' + esc(plan.summary) + '</p>' + (d.stale ? '<p class="st-warn">Your providers, models or default changed. Analyze again before applying this proposal; your active route is unchanged.</p>' : "") + '<ol>' + entries.map((e, i) => '<li><span class="muted">' + (i + 1) + '</span><div><div>' + (i === 0 ? "Start with " : "Then try ") + '<span class="model">' + esc(e.ref) + '</span>' + (e.kind === "metered" ? '<span class="tag">Pay-per-use</span>' : "") + '</div><div class="why">' + esc(e.reason) + '</div></div></li>').join("") + '</ol><p class="privacy">An AI recommendation, not a quality guarantee. Your manual chains, provider priorities, agent/project rules and spending limits are retained. Pinned sessions stay on their current model.</p><div class="route-actions">' + (!applied ? '<button class="btn-primary" id="applyRouting"' + (busy || d.stale ? " disabled" : "") + '>Use this intelligent route</button>' : '<span class="st-ok">Intelligent routing is on</span>') + (d.active ? '<button class="linkish" id="manualRouting"' + (busy ? " disabled" : "") + '>Switch back to manual routes</button>' : "") + '</div></div>' : "") + '</div></div>'
-
-
+  $("intelligentToggle").onclick = () => setIntelligentCollapsed(!intelligentCollapsed)
+  $("intelligentHide").onclick = () => setIntelligentHidden(true)
   if (d.defaultKnown === false) {
     $("intelligentBody").insertAdjacentHTML("afterbegin", '<p class="st-warn">Your default uses an alternate, managed or unreadable configuration source. You can review recommendations, but activation is disabled until the existing default can be verified.</p>')
     if ($("applyRouting")) $("applyRouting").disabled = true
@@ -685,7 +699,7 @@ async function loadIntelligent() {
   try {
     intelligent = await api("/api/intelligent"); intelligentError = ""
     if (!intelligentInitialized) {
-
+      if (intelligentCollapsePreference === null) intelligentCollapsed = intelligent.existingSetup || intelligent.onboarded
       const last = intelligent.candidate || intelligent.active
       if (last) { analysisModel = last.analyzer.replace(/#.*$/, ""); routingGoal = last.goal; includeMetered = last.includeMetered }
       intelligentInitialized = true
