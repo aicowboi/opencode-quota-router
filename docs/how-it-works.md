@@ -39,6 +39,7 @@ flowchart LR
 | `health.ts`, `forecast.ts`, `learn.ts` | Latency and error rate per provider; when a plan window will run out at its current pace; the size of a pool that publishes no figures (xAI), learned from the times it ran out, or estimated from a console reading until then. |
 | `plans.ts`, `pricing.ts` | Subscription plans and advice on whether each fits; value at API list price and actual spend. |
 | `discovery.ts` | Finds every connected provider, labels it subscription, pay-per-use or local from how it was connected, ranks the unconfigured ones, and suggests chain entries by model family or price level, including newer models of the same line. |
+| `intelligent.ts` | Bounds the catalogue-only analysis prompt, validates untrusted recommendations, and adds an isolated route without changing manual configuration. |
 | `config.ts` | Defaults, parsing and checks for every option, and the overlay of stored settings on top of `opencode.jsonc`. |
 
 **Around the engine:**
@@ -49,7 +50,8 @@ flowchart LR
 | `src/controller.ts` | Wires the router to OpenCode. The **retry hook** moves a failed request to the next provider and re-runs it straight away. The **prompt hook** moves a session back up at the start of a turn once a limit has reset, or ahead of one when a usage check says a plan is nearly spent. Short throttles retry in place. |
 | `src/probes/*`, `src/engine/headers.ts` | Optional usage readers: Claude's 5-hour and weekly windows, Copilot's monthly credits, OpenRouter's key limit, whether Ollama or LM Studio is running, ChatGPT's `x-codex-*` headers and standard rate-limit headers. They let routing leave a plan *before* it fails. |
 | `src/recorder.ts`, `src/db.ts`, `src/maintenance.ts` | Record every request from OpenCode's event stream into SQLite, with token counts, value at API prices and actual spend. |
-| `src/dashboard/` | A local-only HTTP server and a single HTML page with live updates over server-sent events, including the settings page. Writes need a JSON `POST` from the page itself; settings also need a per-process token. |
+| `src/dashboard/` | A local-only HTTP server and a single HTML page with live updates over server-sent events, including settings, intelligent setup and route previews built with the router's actual ordering. Writes need a JSON `POST` from the page itself; settings and intelligent setup also need a per-process token. |
+| `src/intelligent.ts` | One-shot stateless generation through an explicitly chosen connected model, proposal/active-preset storage, paid-analysis consent, stale-inventory checks and default-preserving onboarding. No AI calls on the routing path. |
 | `src/tui.tsx`, `src/status.ts` | The terminal part: notifications as toasts, and the status line in the prompt footer, from the dashboard's `/api/status` feed. |
 | `src/cli/` | The `quota-router` command. Its readers parse Claude Code, Codex and OpenCode logs incrementally, read-only, with a private cache; it's built into one file, `dist/cli.mjs`. |
 | `src/telemetry/` | The optional OpenTelemetry export (OTLP over HTTP/JSON). |
@@ -61,7 +63,9 @@ flowchart LR
 
 **Fail over inside the retry hook, not by resending.** Many fallback plugins abort the turn and resend the last message. quota-router instead switches the model in OpenCode's retry hook and asks for an immediate retry, so the same request runs again with its tool calls intact.
 
-**Prefer priority over the model you picked.** Your choice of model sets the chain and the effort level, and routing always uses the best provider with capacity. A session drifts back to your top subscription once it resets. `/router pin` opts a session out, and the subagents it starts with it: a pin is a deliberate choice of provider, so routing their work to the top of the chain would undo it.
+**Prefer the route's order over the model you picked.** Your choice of model sets the chain and the effort level. Manual chains follow provider priority; an accepted intelligent preset follows its reviewed order. Both skip unavailable entries and keep all the policy gates. `/router pin` opts a session out, and the subagents it starts with it: a pin is a deliberate choice of provider, so routing their work to the top of the chain would undo it.
+
+**AI proposes; deterministic routing decides.** Intelligent onboarding makes one bounded call to `ctx.experimental.generate.text` with catalogue metadata only. The response cannot edit settings or invent models. A genuinely unset default can be filled through a model transform; a configured default always wins. Existing/custom setups need explicit acceptance, a changed inventory requires fresh review, and switching to manual removes only the additional preset. Background reloads and normal requests never run an AI analysis.
 
 **Never route deterministic errors.** Content filters, invalid requests and context overflows would fail the same way anywhere, so switching models would only hide them.
 

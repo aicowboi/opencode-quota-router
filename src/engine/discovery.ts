@@ -181,7 +181,7 @@ function familyOf(models: Map<string, ModelInfo>, m: ModelInfo): string | undefi
 export function suggest(config: Config, models: Map<string, ModelInfo>, ignored: Set<string> = new Set()): Suggestion[] {
   const byProvider = new Map<string, ModelInfo[]>()
   for (const m of models.values()) {
-    if (m.tools === false || m.status === "deprecated") continue
+    if ((m.type && m.type !== "chat") || m.tools === false || m.status === "deprecated") continue
     if (config.providers[m.providerID]?.allow === "never") continue
     byProvider.set(m.providerID, [...(byProvider.get(m.providerID) ?? []), m])
   }

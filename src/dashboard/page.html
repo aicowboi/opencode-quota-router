@@ -99,8 +99,35 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.005em }
 .linkish:hover { color: var(--text) }
 .usage { text-align: right; font-size: 13px }
 .tag { display: inline-block; font-size: 11px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; margin-left: 6px; line-height: 16px }
-.sugg { display: grid; grid-template-columns: 90px minmax(0, 1.4fr) minmax(0, 2fr) auto; gap: 14px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 13px; align-items: baseline }
-.sugg:first-child { border-top: 0 }
+.setup { border: 1px solid var(--line-strong); border-radius: 10px; padding: 18px; margin-bottom: 22px; background: var(--surface) }
+.setup h3, .route-title { margin: 0; font-size: 14px; font-weight: 600 }
+.setup p { margin: 8px 0; font-size: 13px; color: var(--soft) }
+.setup-head, .route-actions { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap }
+.setup-fields { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; margin: 16px 0 12px }
+.setup-fields label { display: block; font-size: 12.5px; color: var(--soft); margin-bottom: 5px }
+.setup select { width: 100%; background: var(--raised); border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 8px }
+.setup .option { display: flex; align-items: start; gap: 8px; margin: 8px 0; font-size: 12.5px; color: var(--soft) }
+.setup input[type=checkbox] { accent-color: var(--ok); margin: 3px 0 0 }
+.setup .privacy { color: var(--muted); font-size: 12px; max-width: 880px }
+.setup .route-actions { margin-top: 14px }
+.btn-primary { background: var(--text); color: var(--bg); border: 1px solid var(--text); border-radius: 6px; padding: 6px 12px; font-size: 13px }
+.btn-primary:disabled, .btn-sm:disabled { background: none; color: var(--muted); border-color: var(--line-strong); cursor: not-allowed }
+.setup .error { color: var(--bad) }
+.recommended { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px }
+.recommended ol { padding: 0; margin: 12px 0; list-style: none }
+.recommended li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; padding: 8px 0; border-top: 1px solid var(--line) }
+.recommended li:first-child { border-top: 0 }
+.route-guidance { margin-top: 22px }
+.route-sequence { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; margin: 8px 0 14px }
+.route-sequence li { border: 1px solid var(--line-strong); border-radius: 6px; padding: 5px 9px; font-size: 12.5px; min-width: 125px; max-width: 100%; overflow-wrap: anywhere }
+.route-sequence .new { border-color: var(--ok) }
+.route-sequence .model { display: block; font-size: 11px }
+.route-sequence .unavailable { color: var(--muted); border-style: dashed }
+.route-change { border-top: 1px solid var(--line); padding: 14px 0 }
+.route-change h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600 }
+.route-change .route-actions { margin-top: 8px }
+.route-guidance .body { padding-left: 24px }
+@media (max-width: 720px) { .setup-fields { grid-template-columns: 1fr } .setup { padding: 14px } .route-guidance .body { padding-left: 0 } }
 .btn-sm { font-size: 12px; padding: 2px 9px; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--soft) }
 .btn-sm:hover { color: var(--text); border-color: var(--soft) }
 .btn-sm + .btn-sm, .btn-sm + .linkish { margin-left: 8px }
@@ -240,7 +267,9 @@ footer { padding: 36px 0 48px; color: var(--muted); font-size: 12px; line-height
   </section>
 
   <section aria-labelledby="h-route">
-    <div class="sec-head"><h2 id="h-route">Route</h2><span class="caption">Each request goes to the highest provider with capacity, and comes back up when a limit resets.</span></div>
+    <div class="sec-head"><h2 id="h-route">Routing setup</h2><span class="caption">Choose a recommended preset or review your model routes. Limits, context fit and spending caps still apply.</span></div>
+    <div id="intelligent"></div>
+    <div class="sec-head"><h3 class="route-title">Connected providers</h3><span class="caption">These ranks order manual routes; an accepted intelligent preset has its own order.</span></div>
     <div class="ladder" id="ladder"></div>
     <div id="suggest"></div>
   </section>
@@ -441,6 +470,7 @@ function renderMenu() {
   for (const b of m.querySelectorAll("button")) b.onclick = async () => {
     closeMenu()
     if (b.dataset.a === "probe") await act({ action: "probe" })
+
     else if (b.dataset.a === "dry") await act({ action: "dry-run", on: !(state && state.dryRun) })
     else await act({ action: state && state.paused ? "resume" : "pause" })
   }
@@ -584,22 +614,97 @@ function renderLadder() {
   renderSuggest()
 }
 
-// ---------- chain suggestions (collapsed by default) ----------
+// ---------- model routes and reviewable suggestions ----------
+const routeName = (name) => ({ opus: "Opus route", sonnet: "Sonnet route", fable: "Fable route", haiku: "Haiku route", "quota-router/intelligent": "Intelligent route" })[name] || name
+function routeSequence(entries, label, highlight) {
+  return '<ol class="route-sequence" aria-label="' + esc(label) + '">' + entries.map((e, i) => '<li class="' + (e.ref === highlight ? "new " : "") + (e.connected === false ? "unavailable" : "") + '"><span>' + (i + 1) + " · " + esc(pshort(e.providerID)) + (e.ref === highlight ? ' <span class="st-ok">New</span>' : "") + '</span><span class="model">' + esc(e.ref) + '</span><span class="muted">' + esc(e.connected === false ? "Not connected · skipped" : PKIND[e.kind] || e.kind) + "</span></li>").join("") + "</ol>"
+}
 function renderSuggest() {
-  const s = state, added = Object.entries(s.added || {}).flatMap(([chain, refs]) => refs.map((ref) => ({ chain, ref })))
-  const updates = s.updates || [], replaced = Object.entries(s.replaced || {}).flatMap(([chain, swaps]) => Object.entries(swaps).map(([ref, to]) => ({ chain, ref, to })))
-  if (!s.suggestions.length && !added.length && !updates.length && !replaced.length) { $("suggest").innerHTML = ""; return }
-  const key = "suggest", isOpen = open.has(key)
+  const s = state, routes = s.routes || []
   const data = (x) => ' data-chain="' + esc(x.chain) + '" data-ref="' + esc(x.ref) + '"' + (x.to ? ' data-to="' + esc(x.to) + '"' : "")
-  const rows = updates.map((x) => '<div class="sugg"><span class="soft">' + esc(x.chain) + '</span><span><span class="model">' + esc(x.ref) + "</span>" + (x.to ? ' → <span class="model">' + esc(x.to) + "</span>" : "") + (x.deprecated ? '<div class="st-warn" style="font-size:12px">Deprecated</div>' : "") + '</span><span class="why">' + esc(x.reason) + "</span><span>" + (x.to ? '<button class="btn-sm"' + data(x) + ' data-do="chain-replace">Replace</button>' : "") + '<button class="linkish"' + data(x) + ' data-do="chain-skip">Ignore</button></span></div>').join("") +
-    replaced.map((x) => '<div class="sugg"><span class="soft">' + esc(x.chain) + '</span><span><span class="model">' + esc(x.to) + '</span></span><span class="why">Replaced ' + esc(x.ref) + '</span><span><button class="linkish"' + data({ chain: x.chain, ref: x.ref }) + ' data-do="chain-restore">Undo</button></span></div>').join("") +
-    s.suggestions.map((x) => '<div class="sugg"><span class="soft">' + esc(x.chain) + '</span><span><span class="model">' + esc(x.ref) + '</span><div class="muted" style="font-size:12px">' + esc(pname(x.providerID)) + " · " + esc(PKIND[x.kind] || x.kind) + '</div></span><span class="why">' + esc(x.reason) + '</span><span><button class="btn-sm" data-chain="' + esc(x.chain) + '" data-ref="' + esc(x.ref) + '" data-do="chain-add">Add</button><button class="linkish" data-chain="' + esc(x.chain) + '" data-ref="' + esc(x.ref) + '" data-do="chain-ignore">Ignore</button></span></div>').join("") +
-    added.map((x) => '<div class="sugg"><span class="soft">' + esc(x.chain) + '</span><span class="model">' + esc(x.ref) + '</span><span class="why">Added from a suggestion; ranked by its provider</span><span><button class="linkish" data-chain="' + esc(x.chain) + '" data-ref="' + esc(x.ref) + '" data-do="chain-remove">Remove</button></span></div>').join("")
-  const counts = (s.suggestions.length ? "<span><b>" + s.suggestions.length + "</b> " + plural(s.suggestions.length, "suggestion") + "</span>" : "") + (updates.length ? "<span><b>" + updates.length + "</b> " + plural(updates.length, "update") + "</span>" : "") + (added.length ? "<span><b>" + added.length + "</b> added</span>" : "")
-  $("suggest").innerHTML = '<div class="disc"' + (isOpen ? " open" : "") + '><button class="sum" aria-expanded="' + isOpen + '"><span class="chev">›</span><span style="flex:1">Chain suggestions</span><span class="counts">' + counts + '</span></button><div class="body"><div class="note" style="margin:0 0 8px">A chain lists equivalent models across providers. Adding an entry lets routing fall back to it, in route order; replacing one swaps it for a newer model of the same line and keeps its place. Stored by the plugin, not in your config.</div>' + rows + "</div></div>"
-  const d = $("suggest").querySelector(".disc")
-  d.querySelector(".sum").onclick = () => { const now = !d.hasAttribute("open"); d.toggleAttribute("open", now); now ? open.add(key) : open.delete(key); saveOpen() }
-  for (const b of $("suggest").querySelectorAll("[data-do]")) b.onclick = () => act({ action: b.dataset.do, chain: b.dataset.chain, ref: b.dataset.ref, to: b.dataset.to })
+  const paid = (kind) => kind === "metered" ? '<div class="note st-warn">Pay-per-use: this alternative can incur API charges when routing reaches it. Your spending caps still apply.</div>' : ""
+  $("suggest").innerHTML = '<div class="route-guidance"><div class="setup-head"><h3 class="route-title">Model routes & suggestions</h3><span class="spacer"></span>' + (s.dismissedSuggestions ? '<button class="linkish" data-review>Review dismissed suggestions (' + s.dismissedSuggestions + ")</button>" : "") + '</div><p class="note">A route (called a “chain” in settings) groups models for similar work. Pick a model in a route and requests try its first available entry, from left to right. Limited, disconnected or unsuitable entries are skipped; routing returns when capacity resets. Models outside these routes are left alone.</p><p class="note">Suggestions do nothing until you accept them. Price-based matches are rough comparisons, not proof of equal quality. Open a route to see exactly what would change.</p><div class="list">' + routes.map((r) => {
+    const isOpen = open.has("route:" + r.chain), count = r.suggestions.length + r.updates.length
+    const additions = (s.added || {})[r.chain] || [], replacements = Object.entries((s.replaced || {})[r.chain] || {})
+    const changes = r.suggestions.map((x) => '<div class="route-change"><h4>Add ' + esc(pname(x.providerID)) + ' as an alternative</h4><div class="why">' + esc(x.reason) + '</div>' + paid(x.kind) + '<div class="note">After adding — its position follows provider rank, so it may come before an existing entry:</div>' + routeSequence(x.after, "Route after adding " + x.ref, x.ref) + '<div class="route-actions"><button class="btn-sm"' + data(x) + ' data-do="chain-add" aria-label="Add ' + esc(x.ref) + " to " + esc(routeName(r.chain)) + '">Add to route</button><button class="linkish"' + data(x) + ' data-do="chain-ignore">Dismiss suggestion</button></div></div>').join("") +
+      r.updates.map((x) => '<div class="route-change"><h4>' + (x.to ? "Update a model" : "A model is being retired") + '</h4><div class="model">' + esc(x.ref) + (x.to ? " → " + esc(x.to) : "") + '</div><div class="why">' + esc(x.reason) + '</div>' + (x.after ? '<div class="note">After updating:</div>' + routeSequence(x.after, "Route after updating", x.to) : "") + '<div class="route-actions">' + (x.to ? '<button class="btn-sm"' + data(x) + ' data-do="chain-replace">Use newer model</button>' : "") + '<button class="linkish"' + data(x) + ' data-do="chain-skip">Dismiss suggestion</button></div></div>').join("") +
+      additions.map((ref) => '<div class="route-change"><span class="why">Added earlier: </span><span class="model">' + esc(ref) + '</span><div class="route-actions"><button class="linkish"' + data({ chain: r.chain, ref }) + ' data-do="chain-remove">Remove this addition</button></div></div>').join("") +
+      replacements.map(([ref, to]) => '<div class="route-change"><span class="why">Updated earlier: </span><span class="model">' + esc(ref) + " → " + esc(to) + '</span><div class="route-actions"><button class="linkish"' + data({ chain: r.chain, ref }) + ' data-do="chain-restore">Undo this update</button></div></div>').join("")
+    return '<div class="disc" data-route="' + esc(r.chain) + '"' + (isOpen ? " open" : "") + '><button class="sum" aria-expanded="' + isOpen + '"><span class="chev">›</span><span style="flex:1">' + esc(routeName(r.chain)) + '</span><span class="counts"><span>' + r.entries.filter((e) => e.connected).length + " connected</span><span>" + (count ? count + " " + plural(count, "suggestion") : "No changes suggested") + '</span></span></button><div class="body"><div class="note">Current route · ' + (r.intelligent ? "AI-recommended order. Re-analyze above to propose changes." : "Ordered by provider rank, not by where you clicked Add.") + '</div>' + routeSequence(r.entries, "Current " + routeName(r.chain)) + changes + "</div></div>"
+  }).join("") + '</div><p class="note">If a model appears in several routes, the active intelligent route wins; otherwise the first matching route does. Agent/project rules can select a manual route explicitly. Accepted changes are saved by the plugin, not written to opencode.jsonc. Pinned sessions are never moved.</p></div>'
+  for (const d of $("suggest").querySelectorAll("[data-route]")) d.querySelector(".sum").onclick = () => {
+    const key = "route:" + d.dataset.route, now = !d.hasAttribute("open")
+    d.toggleAttribute("open", now); d.querySelector(".sum").setAttribute("aria-expanded", String(now)); now ? open.add(key) : open.delete(key); saveOpen()
+  }
+  for (const b of $("suggest").querySelectorAll("[data-do]")) b.onclick = () => act({ action: b.dataset.do, chain: b.dataset.chain, ref: b.dataset.ref, ...(b.dataset.to ? { to: b.dataset.to } : {}) })
+  const review = $("suggest").querySelector("[data-review]"); if (review) review.onclick = () => act({ action: "chain-review" })
+}
+
+// ---------- intelligent routing setup ----------
+let intelligent = null, intelligentBusy = false, intelligentError = "", intelligentInitialized = false, analysisModel = "", routingGoal = "balanced", includeMetered = false, paidAnalysis = false
+
+function renderIntelligent() {
+  const el = $("intelligent"), d = intelligent
+
+
+  const focused = el.contains(document.activeElement) ? document.activeElement.id : ""
+  if (!d) { el.innerHTML = intelligentError ? '<div class="setup"><h3>Intelligent routing</h3><p>' + esc(intelligentError) + '</p><button class="btn-sm" id="intelligentRetry">Try again</button></div>' : ""; if ($("intelligentRetry")) $("intelligentRetry").onclick = loadIntelligent; return }
+  if (!d.analyzers.some((m) => m.ref === analysisModel)) analysisModel = d.suggestedAnalyzer || ""
+  const selected = d.analyzers.find((m) => m.ref === analysisModel), busy = intelligentBusy || d.analyzing, fresh = !d.existingSetup && !d.onboarded
+  const plan = d.candidate || d.active, applied = plan && d.active && plan.id === d.active.id
+  const entries = plan ? plan.entries.map((e) => ({ ...e, ...(d.analyzers.find((m) => m.ref === e.ref.replace(/#.*$/, "")) || {}), ref: e.ref })) : []
+  el.innerHTML = '<div class="setup" aria-busy="' + busy + '"><div class="setup-head"><h3>Intelligent routing</h3><span class="tag">' + (d.mode === "intelligent" ? "On" : fresh ? "Recommended setup" : "Optional improvement") + '</span><span class="spacer"></span><span class="caption">' + d.providers + " connected providers · " + d.models + ' coding models</span></div><div id="intelligentBody"><p>Let a connected AI model build a sensible default and fallback route from the models you actually have. Choose your goal; review the explanation and change it whenever you want.</p>' +
+    (d.configuredDefault ? '<p>Your configured default, <span class="model">' + esc(d.configuredDefault) + '</span>, is kept. Analysis suggests alternatives around it; nothing is applied automatically.</p>' : fresh ? '<p>There is no configured default. Finishing this setup adopts the validated recommendation for new sessions. You can choose manual routes instead.</p>' : '<p>Your current setup stays in place until you apply a recommendation.</p>') +
+    '<div class="setup-fields"><div><label for="analysisModel">AI model used for this one analysis</label><select id="analysisModel" aria-describedby="analysisPrivacy"' + (busy ? " disabled" : "") + '>' + (d.analyzers.length ? d.analyzers.map((m) => '<option value="' + esc(m.ref) + '"' + (m.ref === analysisModel ? " selected" : "") + (m.blocked ? " disabled" : "") + '>' + esc(pname(providerOf(m.ref)) + " · " + m.name + " · " + (PKIND[m.kind] || m.kind) + (m.blocked ? " · unavailable" : "")) + "</option>").join("") : '<option value="">No available coding models</option>') + '</select></div><div><label for="routingGoal">What should the route favour?</label><select id="routingGoal"' + (busy ? " disabled" : "") + '>' + [["balanced", "Balanced coding & allowance use"], ["quality", "Best coding quality"], ["economy", "Make included allowances last"]].map(([v, label]) => '<option value="' + v + '"' + (v === routingGoal ? " selected" : "") + '>' + label + "</option>").join("") + '</select></div></div>' +
+    '<label class="option"><input type="checkbox" id="includeMetered"' + (includeMetered ? " checked" : "") + (busy ? " disabled" : "") + '>Allow additional pay-per-use models as last-resort alternatives. Existing spending caps still apply.</label>' +
+    (selected && selected.kind === "metered" ? '<label class="option st-warn"><input type="checkbox" id="paidAnalysis"' + (paidAnalysis ? " checked" : "") + (busy ? " disabled" : "") + '>I understand this analysis itself uses a pay-per-use API and may incur a charge.</label>' : '<p class="privacy">This one analysis uses the selected subscription’s allowance or local model; it is not a free benchmark.</p>') +
+    '<p class="privacy" id="analysisPrivacy">Sent to that model: provider/model names, coding capabilities, context sizes, list prices and your routing goal. No code, conversations, project paths or credentials. One bounded request; no tools or web browsing. Normal routing stays local and does not call AI on every request.</p>' +
+    (!d.available ? '<p class="error">This OpenCode version does not support stateless AI analysis. Manual routes still work.</p>' : "") + (selected && selected.blocked ? '<p class="error">' + esc(selected.blocked) + '</p>' : "") +
+    (intelligentError || d.error ? '<p class="error" role="alert">' + esc(intelligentError || d.error) + '</p>' : "") +
+    '<div class="route-actions"><button class="btn-primary" id="analyzeRouting"' + (busy || !d.available || !selected || selected.blocked || (selected.kind === "metered" && !paidAnalysis) ? " disabled" : "") + '>' + (busy ? "Analyzing your setup…" : fresh ? "Set up intelligent routing" : plan ? "Analyze again" : "Suggest a routing improvement") + '</button>' + (!d.active && !d.onboarded ? '<button class="linkish" id="keepManual"' + (busy ? " disabled" : "") + '>Keep manual routing</button>' : "") + '</div>' +
+    (plan ? '<div class="recommended"><div class="setup-head"><h3>' + (applied ? "Your active intelligent route" : "Recommended route · review before applying") + '</h3><span class="caption">Analyzed ' + esc(fmtWhen(plan.at)) + " · " + esc(plan.goal) + '</span></div><p>' + esc(plan.summary) + '</p>' + (d.stale ? '<p class="st-warn">Your providers, models or default changed. Analyze again before applying this proposal; your active route is unchanged.</p>' : "") + '<ol>' + entries.map((e, i) => '<li><span class="muted">' + (i + 1) + '</span><div><div>' + (i === 0 ? "Start with " : "Then try ") + '<span class="model">' + esc(e.ref) + '</span>' + (e.kind === "metered" ? '<span class="tag">Pay-per-use</span>' : "") + '</div><div class="why">' + esc(e.reason) + '</div></div></li>').join("") + '</ol><p class="privacy">An AI recommendation, not a quality guarantee. Your manual chains, provider priorities, agent/project rules and spending limits are retained. Pinned sessions stay on their current model.</p><div class="route-actions">' + (!applied ? '<button class="btn-primary" id="applyRouting"' + (busy || d.stale ? " disabled" : "") + '>Use this intelligent route</button>' : '<span class="st-ok">Intelligent routing is on</span>') + (d.active ? '<button class="linkish" id="manualRouting"' + (busy ? " disabled" : "") + '>Switch back to manual routes</button>' : "") + '</div></div>' : "") + '</div></div>'
+
+
+  if (d.defaultKnown === false) {
+    $("intelligentBody").insertAdjacentHTML("afterbegin", '<p class="st-warn">Your default uses an alternate, managed or unreadable configuration source. You can review recommendations, but activation is disabled until the existing default can be verified.</p>')
+    if ($("applyRouting")) $("applyRouting").disabled = true
+  }
+  $("analysisModel").onchange = (e) => { analysisModel = e.target.value; paidAnalysis = false; renderIntelligent(); $("analysisModel").focus() }
+  $("routingGoal").onchange = (e) => { routingGoal = e.target.value }
+  $("includeMetered").onchange = (e) => { includeMetered = e.target.checked }
+  if ($("paidAnalysis")) $("paidAnalysis").onchange = (e) => { paidAnalysis = e.target.checked; renderIntelligent(); $("paidAnalysis").focus() }
+  $("analyzeRouting").onclick = () => intelligentAction({ action: "analyze", analyzer: analysisModel, goal: routingGoal, includeMetered, allowMeteredAnalysis: paidAnalysis, setup: fresh, force: !!plan })
+  if ($("applyRouting")) $("applyRouting").onclick = () => intelligentAction({ action: "apply", id: plan.id })
+  for (const id of ["keepManual", "manualRouting"]) if ($(id)) $(id).onclick = () => intelligentAction({ action: "manual" })
+  const result = el.querySelector(".recommended h3"), error = el.querySelector('.error[role="alert"]')
+  if (result) { result.id = "routingResult"; result.tabIndex = -1 }
+  if (error) { error.id = "intelligentError"; error.tabIndex = -1 }
+  if (focused && $(focused) && !$(focused).disabled) $(focused).focus({ preventScroll: true })
+}
+async function loadIntelligent() {
+  try {
+    intelligent = await api("/api/intelligent"); intelligentError = ""
+    if (!intelligentInitialized) {
+
+      const last = intelligent.candidate || intelligent.active
+      if (last) { analysisModel = last.analyzer.replace(/#.*$/, ""); routingGoal = last.goal; includeMetered = last.includeMetered }
+      intelligentInitialized = true
+    }
+  } catch { intelligentError = "Could not load intelligent setup. Manual model routes still work." }
+  renderIntelligent()
+}
+async function intelligentAction(body) {
+  intelligentBusy = true; intelligentError = ""; renderIntelligent()
+  try {
+    const response = await fetch("/api/intelligent", { method: "POST", headers: { "content-type": "application/json", "x-quota-router": "1", "x-quota-router-token": TOKEN }, body: JSON.stringify(body) })
+    const result = await response.json()
+    if (!response.ok || !result.ok) throw new Error(result.error || "The setup could not be saved. Nothing was changed.")
+    intelligent = result.state
+    announce(body.action === "analyze" && intelligent.mode !== "intelligent" ? "Your routing recommendation is ready to review." : body.action === "manual" ? "Manual routing restored. Your configured default is unchanged." : "Intelligent routing saved. Pinned sessions are unchanged.")
+  } catch (error) { intelligentError = error.message || "Can't reach the plugin. Try again." }
+  intelligentBusy = false; renderIntelligent(); refreshState()
+  const focus = intelligentError ? $("intelligentError") : body.action === "manual" ? $("analyzeRouting") : $("routingResult")
+  if (focus) focus.focus({ preventScroll: true })
 }
 
 // ---------- totals ----------
@@ -1134,7 +1239,7 @@ function connect() {
   const es = new EventSource("/api/stream")
   const live = $("live")
   es.addEventListener("hello", () => { live.classList.add("on"); live.querySelector("span").textContent = "Live" })
-  es.addEventListener("change", (e) => { const kinds = JSON.parse(e.data); refreshState(); if (kinds.includes("alerts")) loadAlerts(); if (kinds.some((k) => k !== "live" && k !== "tick")) scheduleRange() })
+  es.addEventListener("change", (e) => { const kinds = JSON.parse(e.data); refreshState(); if (kinds.includes("alerts")) loadAlerts(); if (kinds.some((k) => k === "intelligent" || k === "config")) loadIntelligent(); if (kinds.some((k) => k !== "live" && k !== "tick")) scheduleRange() })
   es.onerror = () => { live.classList.remove("on"); live.querySelector("span").textContent = "Reconnecting" }
 }
 let sqTimer = null
@@ -1143,7 +1248,7 @@ setInterval(() => { tick(); if (state) renderMast() }, 1000)
 setInterval(refreshState, 15000)
 let resizeTimer = null
 addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (series) renderChart() }, 150) })
-refreshState().then(refreshRange); connect(); route()
+refreshState().then(refreshRange); connect(); route(); loadIntelligent()
 </script>
 </body>
 </html>

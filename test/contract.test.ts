@@ -9,6 +9,8 @@ import type { Plugin } from "@opencode/plugin"
 import type { OpenCodeEvent } from "@opencode/client"
 import type { SessionHttpResponse, SessionPrompt, SessionRetry } from "@opencode/plugin/promise/session"
 import type { Core } from "../src/core.ts"
+import type { IntelligentRouting } from "../src/intelligent.ts"
+import type { ModelEditor } from "@opencode/plugin/promise/model"
 import type { onCodexResponse, onHttpResponse, onPrompt, onRetry } from "../src/controller.ts"
 
 type Ctx = Plugin.Context
@@ -33,6 +35,9 @@ ok<Fits<string, Parameters<Ctx["integration"]["connection"]["active"]>[0]>>()
 ok<Fits<NonNullable<Awaited<ReturnType<Ctx["integration"]["connection"]["active"]>>>, Parameters<Ctx["integration"]["connection"]["resolve"]>[0]>>()
 ok<Fits<{ signal: AbortSignal }, Parameters<Ctx["event"]["subscribe"]>[0]>>()
 ok<Fits<Ctx["model"]["list"], () => Promise<unknown>>>()
+ok<Fits<ModelEditor, Parameters<IntelligentRouting["transformDefault"]>[1]>>()
+ok<Fits<{ model: { providerID: string; id: string }; prompt: string }, Parameters<Ctx["experimental"]["generate"]["text"]>[0]>>()
+ok<Fits<{ signal: AbortSignal }, NonNullable<Parameters<Ctx["experimental"]["generate"]["text"]>[1]>>>()
 ok<Fits<Ctx["command"]["transform"], (...args: any[]) => unknown>>()
 ok<Fits<Ctx["location"]["directory"], string | undefined>>()
 

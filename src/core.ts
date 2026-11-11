@@ -28,6 +28,8 @@ import { forecast, paceGate, type WindowForecast } from "./engine/forecast.ts"
 import { nextMonthUtc } from "./engine/resets.ts"
 import { findInChains, orderedChain, type Preferred } from "./engine/router.ts"
 import type { ModelInfo, ModelRef, PoolState, Signal, Tokens } from "./engine/types.ts"
+import { INTELLIGENT_CHAIN } from "./engine/intelligent.ts"
+import { IntelligentRouting } from "./intelligent.ts"
 
 import { VERSION } from "./version.ts"
 export { VERSION }
@@ -110,6 +112,7 @@ export class Core {
   shutdown?: () => Promise<void>
   readonly version = VERSION
   readonly telemetry: Telemetry
+  readonly intelligent: IntelligentRouting
 
   private constructor(store: Store, log: Logger, options: unknown) {
     this.store = store
@@ -134,6 +137,7 @@ export class Core {
     })
     this.recorder = new Recorder(store, (p, m, t, r) => this.price(p, m, t, r), (id) => void this.fetchSession(id), (k) => this.notify(k), (id) => !!this.sessions.get(id)?.fallback)
     this.telemetry = new Telemetry(this)
+    this.intelligent = new IntelligentRouting(this)
     for (const w of warnings) log.warn("config", { warning: w })
   }
 
@@ -159,7 +163,7 @@ export class Core {
     const { config, warnings } = loadConfig(overlay(this.options, this.storedSettings()))
     const connected = new Map<string, ConnectionMethod | undefined>()
     for (const m of this.models.values()) if (!connected.has(m.providerID)) connected.set(m.providerID, this.connections.get(m.providerID))
-    this.config = withAdditions(withReplacements(applyDiscovery(config, connected), this.chainReplacements()), this.chainAdditions())
+    this.config = this.intelligent.applyToConfig(withAdditions(withReplacements(applyDiscovery(config, connected), this.chainReplacements()), this.chainAdditions()))
     this.warnings = warnings
     this.pools.setConfig(this.config)
     // Chains and ranks may have changed: re-resolve each session's preference.
@@ -234,6 +238,7 @@ export class Core {
     this.log.info("setting", { path, cleared: value === undefined })
     this.rebuildConfig()
     this.log.setLevel(this.config.log.level)
+    void this.intelligent.reloadDefaults()
     return { ok: true }
   }
 
@@ -572,7 +577,7 @@ export class Core {
 
   /** Entries with a newer model of the same line on offer, or marked deprecated by their provider. */
   updates() {
-    return chainUpdates(this.config, this.models, new Set(this.ignoredSuggestions()))
+    return chainUpdates(this.config, this.models, new Set(this.ignoredSuggestions())).filter((u) => u.chain !== INTELLIGENT_CHAIN)
   }
 
   /** Swap a chain entry for a newer model, pass the suggestion over, or put the original entry back. */
@@ -592,7 +597,12 @@ export class Core {
   }
 
   suggestions() {
-    return suggest(this.config, this.models, new Set(this.ignoredSuggestions()))
+    return suggest(this.config, this.models, new Set(this.ignoredSuggestions())).filter((s) => s.chain !== INTELLIGENT_CHAIN)
+  }
+
+  reviewSuggestions() {
+    this.store.setMeta("chain_ignored", "[]")
+    this.notify("config")
   }
 
   /** Accept, ignore or undo a suggested chain entry. Stored in the plugin's database, never in the user's config. */
@@ -688,10 +698,11 @@ export class Core {
       const list: any[] = Array.isArray(result) ? result : (result?.data ?? result?.items ?? [])
       const next = new Map<string, ModelInfo>()
       for (const m of list) {
-        if (!m?.providerID || !m?.id || m.enabled === false) continue
+        if (!m?.providerID || !m?.id || m.enabled === false || (m.type && m.type !== "chat")) continue
         next.set(refKey(m), {
           providerID: m.providerID,
           id: m.id,
+          type: typeof m.type === "string" ? m.type : undefined,
           name: m.name,
           variants: (m.variants ?? []).map((v: any) => (typeof v === "string" ? v : v?.id)).filter(Boolean),
           context: m.limit?.context,
@@ -1240,6 +1251,7 @@ export class Core {
   }
 
   stopTimers() {
+    this.intelligent.stop()
     for (const t of this.timers) clearInterval(t)
     this.timers = []
   }

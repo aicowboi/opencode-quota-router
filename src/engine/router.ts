@@ -5,6 +5,7 @@ import { modelPools } from "./classify.ts"
 import type { Gate } from "./policy.ts"
 import type { PoolStore } from "./pools.ts"
 import type { ModelInfo, ModelRef } from "./types.ts"
+import { INTELLIGENT_CHAIN } from "./intelligent.ts"
 
 export const EFFORT = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
@@ -14,16 +15,18 @@ export type RouteResult =
   | { target: ModelRef; index: number; usable: "yes" | "trial"; skipped: string[]; /** The schedule that put the target first, if one did. */ schedule?: string }
   | { target: undefined; earliest?: number; next?: ModelRef; skipped: string[] }
 
-/** Chain entries ordered by provider priority. A stable sort keeps the configured order within a provider. */
+/** Manual entries follow provider priority; an accepted intelligent preset keeps its reviewed order. */
 export function orderedChain(config: Config, name: string): ModelRef[] {
   const chain = config.chains[name] ?? []
+  // This isolated route was explicitly accepted as an ordered AI recommendation. Manual chains keep provider rank.
+  if (name === INTELLIGENT_CHAIN) return [...chain]
   const rank = (ref: ModelRef) => config.providers[ref.providerID]?.priority ?? 99
   return chain.map((ref, i) => ({ ref, i })).sort((a, b) => rank(a.ref) - rank(b.ref) || a.i - b.i).map((x) => x.ref)
 }
 
 /** The chain and position a model belongs to. Variants are ignored when matching. */
 export function findInChains(config: Config, model: { providerID: string; id: string }): { chain: string; index: number } | undefined {
-  for (const name of Object.keys(config.chains)) {
+  for (const name of [INTELLIGENT_CHAIN, ...Object.keys(config.chains).filter((k) => k !== INTELLIGENT_CHAIN)]) {
     const index = orderedChain(config, name).findIndex((r) => r.providerID === model.providerID && r.id === model.id)
     if (index !== -1) return { chain: name, index }
   }
@@ -109,9 +112,9 @@ export function route(input: {
 }): RouteResult {
   const { config, pools, models, preferred } = input
   const chain = orderedChain(config, preferred.chain)
-  // The model the user picked sets the chain and the effort level; priority order always decides the provider.
+  // The model the user picked sets the chain and effort; the route's order decides the provider.
   const baseline = chain[preferred.index]
-  let order = fasterFirst(config, chain, input.speed)
+  let order = preferred.chain === INTELLIGENT_CHAIN ? [...chain.keys()] : fasterFirst(config, chain, input.speed)
   const first = input.first
   if (first) order = [...order.filter((i) => first(chain[i])), ...order.filter((i) => !first(chain[i]))]
   const skipped: string[] = []

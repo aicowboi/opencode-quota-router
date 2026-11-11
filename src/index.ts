@@ -7,6 +7,7 @@ import { backfill } from "./backfill.ts"
 import { refLabel } from "./engine/config.ts"
 import { onCodexResponse, onEvent, onHttpResponse, onPrompt, onRetry } from "./controller.ts"
 import { Core, VERSION } from "./core.ts"
+import { inspectDefault } from "./default-model.ts"
 import { startDashboard } from "./dashboard/server.ts"
 import { dashboardFile } from "./tui-feed.ts"
 import { doctorNote, runDoctor } from "./doctor.ts"
@@ -160,6 +161,14 @@ export default {
     core.setOptions(ctx.options)
     core.ctx = ctx
     core.instances.add(ctx)
+
+    // Registry overrides and the root configured default are separate in OpenCode. Preserve both, and never use
+    // model.default() to infer provenance: it resolves a model even when the user has not chosen one.
+    core.intelligent.captureConfiguredDefault(ctx, inspectDefault(ctx.location?.directory ?? process.cwd()))
+    await ctx.model.transform((editor: any) => core.intelligent.transformDefault(ctx, editor))
+    const reloadDefault = () => ctx.model.reload()
+    core.intelligent.reloaders.add(reloadDefault)
+    await ctx.model.default()
 
     await ctx.session.hook("retry", guard(core, "retry", (e: any) => onRetry(core, e)))
     await ctx.session.hook("prompt", guard(core, "prompt", (e: any) => onPrompt(core, e)))
@@ -320,6 +329,11 @@ export default {
             if (!e?.id || g.seen.has(e.id)) continue
             g.seen.add(e.id)
             if (g.seen.size > 20_000) for (const id of [...g.seen].slice(0, 5_000)) g.seen.delete(id)
+            if (e.type === "config.updated") {
+              core.intelligent.captureConfiguredDefault(ctx, inspectDefault(ctx.location?.directory ?? process.cwd()))
+              await ctx.model.reload()
+              continue
+            }
             if (!e.type.startsWith("session.") && !["credential.updated", "credential.switched", "integration.updated", "model.updated", "provider.updated"].includes(e.type)) continue
             if (e.type.endsWith(".delta") || e.type === "session.tool.progress") continue
             try {
@@ -342,6 +356,8 @@ export default {
     return () => {
       controller.abort()
       core.onChatgpt.delete(hookCodex)
+      core.intelligent.reloaders.delete(reloadDefault)
+      core.intelligent.forgetDefault(ctx)
       core.instances.delete(ctx)
       if (core.ctx === ctx) core.ctx = [...core.instances][0] ?? ctx
       if (core.instances.size === 0) g.shutdownTimer = setTimeout(() => void shutdown(g, true), 5_000)

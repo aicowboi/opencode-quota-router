@@ -54,6 +54,7 @@ export type ProviderKind = "subscription" | "metered" | "local"
 export type ModelInfo = {
   providerID: string
   id: string
+  type?: string
   name?: string
   variants: string[]
   context?: number

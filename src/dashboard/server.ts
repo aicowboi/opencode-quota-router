@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url"
 import * as q from "./queries.ts"
 import { createHash } from "node:crypto"
 import { dataDir } from "../log.ts"
+import { routeGuidance } from "./routes.ts"
 
 /** Which database this process serves, as a short hash of its folder: lets two OpenCode processes tell whether they share one, without saying where it is. */
 const STORE = createHash("sha256").update(dataDir()).digest("hex").slice(0, 12)
@@ -110,6 +111,7 @@ export function buildState(core: Core) {
       pools: core.pools.all().filter((x) => x.id === id || x.id.startsWith(`${id}:`)),
       serving: live.filter((l) => l.model?.startsWith(`${id}/`)).length,
     }))
+  const suggestions = core.suggestions(), updates = core.updates()
   return {
     now,
     version: VERSION,
@@ -129,8 +131,10 @@ export function buildState(core: Core) {
     chatgpt: { active: core.chatgptActive(), at: core.chatgpt.at, data: core.chatgpt.data, cutoverAtPct: core.config.chatgpt.cutoverAtPct },
     saved: core.saved(now),
     spend: { ...core.config.spend, ...core.spend(now), blocked: core.spendBlocks(now), pending: core.recorder.pendingAnthropic() },
-    suggestions: core.suggestions(),
-    updates: core.updates(),
+    suggestions,
+    updates,
+    routes: routeGuidance(core.config, core.models, suggestions, updates),
+    dismissedSuggestions: core.ignoredSuggestions().length,
     replaced: core.chainReplacements(),
     added: core.chainAdditions(),
     live,
@@ -210,6 +214,21 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
           return json(res, { at: Date.now(), checks: runDoctor(core) })
         case "/api/notifications":
           return json(res, core.alerts({ after: url.searchParams.has("after") ? num("after", 0) : undefined, limit: num("limit", 50) }))
+        case "/api/intelligent": {
+          if (req.method === "GET") return json(res, core.intelligent.state())
+          if (!writeAllowed(req, true)) return json(res, { error: "Forbidden" }, 403)
+          const body = await readBody(req)
+          if (!body) return json(res, { error: "Bad request" }, 400)
+          try {
+            if (body.action === "analyze") await core.intelligent.analyze(body as any)
+            else if (body.action === "apply") await core.intelligent.apply(body.id)
+            else if (body.action === "manual") await core.intelligent.manual()
+            else return json(res, { error: "Unknown action" }, 400)
+            return json(res, { ok: true, state: core.intelligent.state() })
+          } catch (error) {
+            return json(res, { error: error instanceof Error ? error.message : "The routing setup could not be completed" }, 400)
+          }
+        }
         case "/api/settings": {
           if (req.method === "GET") return json(res, buildSettings(core))
           if (!writeAllowed(req, true)) return json(res, { error: "Forbidden" }, 403)
@@ -301,6 +320,7 @@ function makeHandler(core: Core, clients: Set<http.ServerResponse>): Handler {
             core.save(a.provider, Date.now() + Math.round(a.minutes) * 60_000)
           else if (a.action === "unsave" && typeof a.provider === "string") core.save(a.provider)
           else if (a.action === "probe") await Promise.allSettled([core.probeClaude(true), core.probeCopilot(true)])
+          else if (a.action === "chain-review") core.reviewSuggestions()
           else if (["chain-add", "chain-ignore", "chain-remove"].includes(a.action) && typeof a.chain === "string" && typeof a.ref === "string" && core.config.chains[a.chain] && /^[^/\s]+\/[^\s]+$/.test(a.ref))
             core.changeChain(a.action.slice(6) as "add" | "ignore" | "remove", a.chain, a.ref)
           else if (["chain-replace", "chain-skip", "chain-restore"].includes(a.action) && typeof a.chain === "string" && typeof a.ref === "string" && Object.hasOwn(core.config.chains, a.chain) && REF.test(a.ref) && (a.action === "chain-replace" ? typeof a.to === "string" && REF.test(a.to) && core.updates().some((u) => u.chain === a.chain && u.ref === a.ref && u.to === a.to) : a.to === undefined || (typeof a.to === "string" && (a.to === "" || REF.test(a.to)))))
