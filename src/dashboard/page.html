@@ -204,6 +204,9 @@ footer { padding: 36px 0 48px; color: var(--muted); font-size: 12px; line-height
 .check { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px }
 .check:first-child { border-top: 0 }
 .check .fix { color: var(--soft); font-size: 12.5px }
+.check.alert { grid-template-columns: 18px minmax(0, 1fr) auto }
+.alert-dismiss { align-self: start; margin-top: -4px; font-size: 20px; line-height: 1 }
+#alerts .sec-head { flex-wrap: wrap }
 .banner { margin-top: 14px; font-size: 13px; color: var(--warn) }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important } }
 </style>
@@ -280,7 +283,7 @@ footer { padding: 36px 0 48px; color: var(--muted); font-size: 12px; line-height
   </section>
 
   <section aria-labelledby="h-alerts" id="alerts" hidden>
-    <div class="sec-head"><h2 id="h-alerts">Notifications</h2><span class="caption">Fallbacks, returns, spend caps and failing usage checks from the last 30 days</span></div>
+    <div class="sec-head"><h2 id="h-alerts">Notifications</h2><span class="caption">Fallbacks, returns, spend caps and failing usage checks from the last 30 days</span><span class="spacer"></span><button class="more" id="alertsRestore" hidden>Restore hidden</button><button class="more" data-hide="alerts" aria-controls="alertList" aria-expanded="true">Hide</button></div>
     <div id="alertList" aria-live="polite"></div>
   </section>
 
@@ -723,12 +726,40 @@ async function loadDay(el) {
 
 // ---------- notifications ----------
 const ALERT = { fallback: "st-warn", return: "st-ok", allLimited: "st-bad", spendCap: "st-warn", usageCheck: "st-warn" }
+const HIDDEN_ALERTS = "qr.hide.alerts.items"
+const alertKey = (a) => a.id + ":" + a.at
+let alertRows = [], hiddenAlerts = new Set()
+try {
+  const saved = JSON.parse(localStorage.getItem(HIDDEN_ALERTS) || "[]")
+  // Keep only IDs and times, not notification text; forget choices once the feed's 30-day retention has passed.
+  if (Array.isArray(saved)) hiddenAlerts = new Set(saved.filter((k) => typeof k === "string" && /^\d+:\d+$/.test(k) && Number(k.split(":")[1]) > Date.now() - 30 * 864e5))
+} catch {}
+function saveHiddenAlerts() { try { localStorage.setItem(HIDDEN_ALERTS, JSON.stringify([...hiddenAlerts])) } catch {} }
+function renderAlerts() {
+  const rows = alertRows.filter((a) => !hiddenAlerts.has(alertKey(a))), hidden = alertRows.length - rows.length
+  $("alerts").hidden = !alertRows.length
+  $("alertsRestore").hidden = !hidden
+  $("alertsRestore").textContent = "Restore hidden (" + hidden + ")"
+  $("alertList").innerHTML = rows.map((a) => '<div class="check alert"><span class="' + (ALERT[a.kind] || "muted") + '" aria-hidden="true">●</span><div><div>' + esc(a.title) +
+    ' <span class="muted">· ' + esc(fmtWhen(a.at)) + "</span></div>" + (a.body ? '<div class="why">' + esc(a.body) + "</div>" : "") + '</div><button class="iconbtn alert-dismiss" data-hide-alert="' + esc(alertKey(a)) + '" aria-label="Hide notification: ' + esc(a.title) + '" title="Hide notification"><span aria-hidden="true">×</span></button></div>').join("") || '<div class="empty">All recent notifications are hidden.</div>'
+  const buttons = [...$("alertList").querySelectorAll("[data-hide-alert]")]
+  buttons.forEach((b, i) => { b.onclick = () => {
+    hiddenAlerts.add(b.dataset.hideAlert); saveHiddenAlerts(); renderAlerts()
+    const next = $("alertList").querySelectorAll("[data-hide-alert]")
+    const target = next[Math.min(i, next.length - 1)] || $("alertsRestore")
+    target.focus()
+    announce("Notification hidden.")
+  } })
+}
+$("alertsRestore").onclick = () => {
+  hiddenAlerts.clear(); saveHiddenAlerts(); renderAlerts()
+  $("alertList").querySelector("[data-hide-alert]")?.focus()
+  announce("Hidden notifications restored.")
+}
 async function loadAlerts() {
   try {
     const d = await api("/api/notifications?limit=20")
-    $("alerts").hidden = !d.alerts.length
-    $("alertList").innerHTML = d.alerts.slice().reverse().map((a) => '<div class="check"><span class="' + (ALERT[a.kind] || "muted") + '" aria-hidden="true">●</span><div><div>' + esc(a.title) +
-      ' <span class="muted">· ' + esc(fmtWhen(a.at)) + "</span></div>" + (a.body ? '<div class="why">' + esc(a.body) + "</div>" : "") + "</div></div>").join("")
+    alertRows = d.alerts.slice().reverse(); renderAlerts()
   } catch {}
 }
 loadAlerts()
@@ -768,7 +799,7 @@ async function loadAdvice() {
   } catch { el.innerHTML = '<div class="empty">The advice could not be worked out.</div>' }
   el.removeAttribute("aria-busy")
 }
-// Health check and Plan advice can be hidden; the choice is remembered. Asking for one (/router doctor, /router advice) shows it again.
+// These sections can be hidden; the choice is remembered. Linking to a section shows it again.
 function fold(id, hidden) {
   const sec = $(id), btn = sec.querySelector("[data-hide]")
   sec.classList.toggle("folded", hidden)
@@ -782,7 +813,7 @@ for (const btn of document.querySelectorAll("[data-hide]")) {
   fold(id, localStorage.getItem("qr.hide." + id) === "1" && location.hash !== "#" + id)
   btn.onclick = () => { const hidden = !$(id).classList.contains("folded"); fold(id, hidden); if (!hidden && id === "doctor") loadDoctor(); announce($(id).querySelector("h2").textContent + (hidden ? " hidden." : " shown.")) }
 }
-addEventListener("hashchange", () => { const id = location.hash.slice(1); if ((id === "doctor" || id === "advice") && $(id).classList.contains("folded")) fold(id, false) })
+addEventListener("hashchange", () => { const id = location.hash.slice(1); if (["doctor", "advice", "alerts"].includes(id) && $(id).classList.contains("folded")) fold(id, false) })
 $("adviceRun").onclick = loadAdvice
 if (location.hash === "#advice") loadAdvice().then(() => $("advice").scrollIntoView())
 addEventListener("hashchange", () => { if (location.hash === "#advice") loadAdvice() })

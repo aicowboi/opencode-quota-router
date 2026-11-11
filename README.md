@@ -250,6 +250,8 @@ Sessions move at their next turn after a schedule starts or ends, never in the m
 
 **Notifications:** quota-router tells you when a session falls back, when it returns, when every provider is limited, when a spend cap is reached, and when a usage check has been failing for ten minutes. They appear on the dashboard, in the menu bar's menu, and as toasts in the OpenCode terminal. Set `"notifications": { "system": true }` to also get them from the operating system (`osascript` on macOS, `notify-send` on Linux). The same thing is not repeated within a few minutes, there are never more than 20 an hour, and each kind can be turned off under `notifications.events`. A notification holds model and provider names and the reason for the change; never a prompt, a session title or any code.
 
+On the dashboard, **Hide/Show** beside Notifications collapses or expands the whole section, **×** hides one notification, and **Restore hidden** brings hidden items back. These choices are remembered in that browser only; they do not turn off recording or change menu bar, terminal or system notifications.
+
 **Telemetry export:** to see the same totals in Grafana, Datadog, Honeycomb or your own OpenTelemetry collector, set `"telemetry": { "enabled": true, "endpoint": "https://…" }`. It is off by default, sends counts and costs only, and identifies you or your projects only if you ask it to. See [docs/telemetry.md](docs/telemetry.md).
 
 **Data:** `~/.local/share/opencode-quota-router/router.db` (SQLite) holds daily rollups, cached session totals and retention settings, sized for years of use. On first start, earlier usage is imported read-only from OpenCode's own database.
