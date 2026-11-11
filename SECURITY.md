@@ -4,6 +4,8 @@ quota-router's routing and storage run on your machine. It has no analytics or h
 
 ## What it reads
 
+**Installer:** the optional installer reads the chosen OpenCode config only to add or update quota-router's plugin reference. It downloads the pinned npm release, or uses an explicitly selected/local sibling tarball, verifies the archive integrity, and installs with npm lifecycle scripts disabled. Builds are kept in a new version-and-content-addressed user directory; an existing loaded build is never overwritten. Config edits preserve comments and unrelated settings, use a private backup and an atomic replacement, preserve symlinks, and refuse malformed/ambiguous configs or concurrent changes. The installer does not run OpenCode, restart its service, alter your selected model or sign into providers. Review `install.sh`/`install.mjs` before using the one-line bootstrap.
+
 | Data | When | Why |
 |---|---|---|
 | OpenCode session events (models, token counts, timings, session titles) | Always | Routing decisions and the dashboard |

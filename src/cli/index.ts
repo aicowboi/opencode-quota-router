@@ -1,8 +1,9 @@
 // `quota-router`: usage and limits from the command line. `usage` and `limits` read the logs that Claude Code, Codex
 // and OpenCode keep on this machine; `status`, `prompt` and `doctor` ask the plugin's local dashboard while OpenCode
-// runs. Nothing is sent anywhere.
+// runs. `install` downloads and configures the plugin; the other commands never upload your usage.
 import { execFile } from "node:child_process"
 import { VERSION } from "../version.ts"
+import { installerMain } from "../../install.mjs"
 import { notedPort, reader, statusLine, type StatusFeed } from "../tui-feed.ts"
 import { defaultPaths, readUsage, SOURCES, type Paths, type Source } from "./readers.ts"
 import { GROUPS, loadPrices, RANGES, rangeStart, summarise, type GroupBy, type Row } from "./report.ts"
@@ -12,6 +13,7 @@ const HELP = `quota-router ${VERSION}: usage and limits for your AI coding tools
 Usage: quota-router <command> [options]
 
 Commands:
+  install    Install or update the plugin, preserving existing OpenCode settings
   usage      Tokens and their value at API prices, from Claude Code, Codex and OpenCode logs
   limits     Plan windows: Codex from its logs, others from the plugin while OpenCode runs
   status     What the plugin is doing: providers, limits and running sessions
@@ -29,8 +31,8 @@ Options:
   --color / --no-color                        prompt: colour by state (default: when the output is a terminal)
   -h, --help, -v, --version
 
-Reads, never writes: ~/.claude/projects, ~/.codex/sessions and OpenCode's database. A cache of what was read is
-kept in ~/.cache/quota-router so later runs only read what is new.`
+Usage readers never write to ~/.claude/projects, ~/.codex/sessions or OpenCode's database. A private cache keeps
+later runs quick. Install options: quota-router install --help.`
 
 export type Args = { command?: string; flags: Map<string, string[]>; bad?: string }
 
@@ -226,6 +228,7 @@ function fail(out: Out, message: string): number {
 }
 
 export async function main(argv: string[], out: Out = { log: (s) => console.log(s), err: (s) => console.error(s) }, paths: Paths = defaultPaths()): Promise<number> {
+  if (argv[0] === "install") return installerMain(argv.slice(1), out)
   const args = parseArgs(argv)
   if (args.bad) return fail(out, `${args.bad}\n\nRun quota-router --help for the commands.`)
   if (args.flags.has("version")) {

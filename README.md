@@ -47,12 +47,38 @@ quota-router uses it in this order:
 ## Requirements
 
 - **OpenCode V2**, 2.2 or later. The menu bar item needs OpenCode Desktop. See the [support matrix](docs/support.md).
-- **Node.js 24 or later**, only for the `quota-router` command line and to build from source. OpenCode runs the plugin itself.
+- **Node.js 24 or later with npm**, for the one-line installer, `quota-router` command line and source builds. A manual plugin registration does not need Node; OpenCode runs the plugin itself.
 - **At least two OpenCode providers connected**, for example a Claude subscription and an API key.
 
 ## Quick start
 
-Add the plugin to your global OpenCode config, `~/.config/opencode/opencode.jsonc`:
+With OpenCode V2 installed, run one command (macOS, Linux or Windows):
+
+```sh
+npx --yes --ignore-scripts opencode-quota-router@0.2.0 install
+```
+
+Or, on macOS/Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aicowboi/opencode-quota-router/main/install.sh | sh
+```
+
+The installer downloads the pinned prebuilt release, verifies its integrity and adds it to your global OpenCode config. Existing comments, models, credentials, other plugins and quota-router options are kept. A changed config gets a private backup; repeat installs are safe. No `sudo`, shell-profile edits, global npm install, AI analysis or service restart.
+
+Then open OpenCode normally, connect your providers and run **`/router`**. The dashboard offers optional **Intelligent routing** setup; your existing default is preserved.
+
+**Before the first npm publication:** the online commands above become available after the release is published. The local release folder includes `install.sh`, `install.mjs` and `opencode-quota-router-0.2.0.tgz`. From that folder, run **`sh install.sh`** (macOS/Linux) or **`node install.mjs`** (all platforms). The tarball beside the installer is selected automatically, so no npm publication is needed for this path. An explicit tarball also works:
+
+```sh
+node install.mjs --package ./opencode-quota-router-0.2.0.tgz
+```
+
+Use `--dry-run` to preview without changing OpenCode files, `--config <file>` for a custom config, and `--install-dir <dir>` for a custom installation directory. Run `quota-router install --help` for the options. Both `.json` and `.jsonc`, XDG paths and config symlinks are supported. Ambiguous or invalid configs are refused rather than rewritten; a config changed by another process during installation is not overwritten.
+
+### Manual installation
+
+If you prefer to register the plugin yourself, add it to your global OpenCode config, `~/.config/opencode/opencode.jsonc`:
 
 ```jsonc
 {
@@ -106,7 +132,9 @@ Found providers rank after the ones you configured: subscriptions first, then pa
 
 ### 2. Choose your order
 
-Lower numbers are tried first. To put Copilot ahead of xAI, for example:
+The simplest option is **Intelligent routing** on the dashboard: choose a connected model to analyze your setup, review its recommendation, and apply it if you want. Fresh setups without a configured default can adopt the validated preset during setup; existing defaults and custom settings only get a suggestion. This is one explicit analysis, not an AI call on every request. See [Intelligent routing](#dashboard-and-menu-bar).
+
+For manual routes, lower numbers are tried first. To put Copilot ahead of xAI, for example:
 
 ```jsonc
 "options": {

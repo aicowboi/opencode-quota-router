@@ -30,6 +30,7 @@ flowchart LR
 
 | File | Job |
 |---|---|
+| `install.mjs`, `install.sh` | Dependency-free installer and macOS/Linux bootstrap. Installs a verified prebuilt release into an immutable user directory and narrowly edits the OpenCode plugin reference, with JSONC preservation, backups and concurrency checks. Also bundled into `quota-router install`; never starts or restarts OpenCode. |
 | `classify.ts` | Turns a failed request into a signal: what ran out (`throttle`, `overload`, `window`, `billing` or `auth`), for which pool, and until when. Provider-specific wording and codes are checked first, then OpenCode's error type, then the HTTP status. |
 | `resets.ts` | Reads reset times in every format providers use: ISO dates, epoch seconds, `resets 3:45pm`, `resets Mon 12:00am`, `retry-after`, Go durations such as `6m0s`, waits given in words, midnight in a provider's time zone, and "regain access on" dates. |
 | `pools.ts` | Health per *pool*: the thing that actually runs out. The Claude subscription is one pool, with a sub-pool per model family for weekly limits; each API key is another; Gemini, Vertex, Bedrock, Azure and OpenRouter limit each model on its own. Pools are `available`, `degraded`, `cooling` or `blocked`, back off on repeated failures, and turn half-open once their deadline passes. Every session shares this state, and it survives restarts. |

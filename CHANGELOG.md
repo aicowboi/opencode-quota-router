@@ -50,6 +50,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 #### Running it
 
+- One-line installer (`npx --yes --ignore-scripts opencode-quota-router@0.2.0 install`, or the macOS/Linux `install.sh` bootstrap). It also installs local release tarballs before npm publication. Config comments, credentials, default models, other plugins and existing options are preserved, changed configs get private backups, installs are idempotent, and no OpenCode service is started or restarted. Includes dry-run and custom-path options.
 - Dry run: `/router dry-run on` records what routing would do, as "Would: …" rows in the routing log, without moving a session or changing a retry.
 - Settings can be changed while OpenCode runs. They are stored in the plugin's database on top of `opencode.jsonc`, which is never written to.
 - Support matrix (`docs/support.md`) and contract tests against the OpenCode plugin API: the type check fails when a hook, event or context method the plugin uses changes shape. CI also runs on macOS.
