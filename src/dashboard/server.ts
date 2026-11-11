@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url"
 import * as q from "./queries.ts"
 import { createHash } from "node:crypto"
 import { dataDir } from "../log.ts"
+import { buildRates } from "./rates.ts"
 import { routeGuidance } from "./routes.ts"
 
 /** Which database this process serves, as a short hash of its folder: lets two OpenCode processes tell whether they share one, without saying where it is. */
@@ -133,7 +134,37 @@ export function buildState(core: Core) {
     spend: { ...core.config.spend, ...core.spend(now), blocked: core.spendBlocks(now), pending: core.recorder.pendingAnthropic() },
     suggestions,
     updates,
-    routes: routeGuidance(core.config, core.models, suggestions, updates),
+    ...(() => {
+      const routes = routeGuidance(core.config, core.models, suggestions, updates)
+      const refs = new Map<string, { providerID: string; id: string }>()
+      const add = (ref: string, providerID?: string) => {
+        const bare = ref.replace(/#.*$/, "")
+        const slash = bare.indexOf("/")
+        if (slash < 1) return
+        const id = bare.slice(slash + 1)
+        const p = providerID ?? bare.slice(0, slash)
+        refs.set(`${p}/${id}`, { providerID: p, id })
+      }
+      for (const route of routes) {
+        for (const entry of route.entries) add(entry.ref, entry.providerID)
+        for (const suggestion of route.suggestions) {
+          add(suggestion.ref, suggestion.providerID)
+          for (const entry of suggestion.after ?? []) add(entry.ref, entry.providerID)
+        }
+        for (const update of route.updates) for (const entry of update.after ?? []) add(entry.ref, entry.providerID)
+      }
+      return {
+        routes,
+        rates: buildRates({
+          config: core.config,
+          models: core.models,
+          recent: q.usageByModel(core.store, q.resolveRange("30d", now)),
+          all: q.usageByModel(core.store, q.resolveRange("all", now)),
+          refs: [...refs.values()],
+          providerIDs: providers.filter((p) => p.connected || !p.discovered).map((p) => p.id),
+        }),
+      }
+    })(),
     dismissedSuggestions: core.ignoredSuggestions().length,
     replaced: core.chainReplacements(),
     added: core.chainAdditions(),

@@ -260,7 +260,7 @@ Sessions move at their next turn after a schedule starts or ends, never in the m
 **Dashboard:** `http://127.0.0.1:47321` while OpenCode runs, or `/router`. Local only. It shows:
 - totals (tokens, value at API prices, actual spend, savings, model time, fallbacks);
 - efficiency: the share of input read from the cache, tokens per tool call, the share of requests that failed, and the time sessions spent waiting with every provider limited;
-- the route, with each provider's live state and allowances;
+- the route, with each provider's live state, allowances, and what a million tokens costs there (what was charged on pay-per-use, otherwise the API price of the same mix, so providers can be compared; a subscription is not billed that amount);
 - running sessions;
 - a routing log grouped by day;
 - notifications from the last 30 days;

@@ -9,7 +9,8 @@ import { advise, claudePlan, copilotPlan, PLANS } from "../src/engine/plans.ts"
 import { nextMidnightIn, parseDuration, parseResetText, parseRetryAfter, parseRetryText, nextMonthUtc } from "../src/engine/resets.ts"
 import { PoolStore } from "../src/engine/pools.ts"
 import { fasterFirst, findInChains, mapVariant, orderedChain, route } from "../src/engine/router.ts"
-import { aliasTarget, costOf, estimate } from "../src/engine/pricing.ts"
+import { aliasTarget, costOf, estimate, listedPrice, longContextRate, perMillionAt, TYPICAL_MIX } from "../src/engine/pricing.ts"
+import { buildRates } from "../src/dashboard/rates.ts"
 import { healthGate, speedOf, summariseHealth, unreliable } from "../src/engine/health.ts"
 import { combineRules, matchProject, parseRules, ruledOut, rulesGate } from "../src/engine/rules.ts"
 import { activeSchedules, describeSchedule, describeWhen, parseClock, parseSchedules, scheduleFirst, scheduleGate } from "../src/engine/schedule.ts"
@@ -871,4 +872,61 @@ test("pricing: a Claude Code alias stands for the newest model of its family tha
   const tokens = { input: 1_000_000, output: 1_000_000, reasoning: 0, cache: { read: 0, write: 0 } }
   assert.equal(estimate(config, models, "claude-agent", "fable", tokens, 0).equivalent, 48)
   assert.equal(estimate(config, models, "claude-agent", "claude-fable-5-2", tokens, 0).equivalent, 48)
+})
+
+test("unit rate: one mix, API price when nothing was charged, the charge when it was", () => {
+  const opus = { input: 4, output: 20, cache: { read: 0.2, write: 5 } }
+  const grok = [{ input: 2, output: 6, cache: { read: 0.5, write: 0 } }, { tier: { type: "context", size: 200_000 }, input: 4, output: 12, cache: { read: 1, write: 0 } }]
+  const mix = { input: 0, output: 0.01, reasoning: 0, cacheRead: 0.99, cacheWrite: 0 }
+  // 99% cache read at $0.20 plus 1% output at $20. The sample is scaled, so this is exact rather than a float sum.
+  assert.equal(perMillionAt([opus], mix), 0.398)
+  // The sample stays under the long-context tier, so the headline is the base price, and the note can say the rest.
+  assert.equal(perMillionAt(grok, mix), 0.555)
+  assert.equal(longContextRate(grok, mix)?.tokens, 200_000)
+  assert.ok((longContextRate(grok, mix)?.perMillion ?? 0) > perMillionAt(grok, mix)! * 1.25)
+  const models = new Map<string, ModelInfo>([
+    ["anthropic/claude-opus-5-5", { providerID: "anthropic", id: "claude-opus-5-5", name: "Opus 5.5", variants: [], cost: [opus] }],
+    ["xai/grok-4.7", { providerID: "xai", id: "grok-4.7", name: "Grok 4.7", variants: [], cost: grok }],
+    ["ollama/qwen", { providerID: "ollama", id: "qwen", variants: [] }],
+  ])
+  assert.equal(listedPrice(models, "claude-agent", "opus")?.source, "anthropic/claude-opus-5-5")
+  assert.equal(listedPrice(models, "xai", "grok-4.7")?.source, undefined)
+  const { config } = loadConfig({ providers: { ollama: { kind: "local" } } })
+  const spent = (provider: string, model: string, tokens: number, equiv: number, actual: number) => ({
+    provider, model, input: 0, output: tokens * 0.01, reasoning: 0, cacheRead: tokens * 0.99, cacheWrite: 0, tokens, equiv, actual,
+  })
+  const refs = [
+    { providerID: "claude-agent", id: "opus" },
+    { providerID: "xai", id: "grok-4.7" },
+    { providerID: "anthropic", id: "claude-opus-5-5" },
+    { providerID: "ollama", id: "qwen" },
+  ]
+  const recent = [spent("claude-agent", "opus", 2_000_000, 0.8, 0), spent("anthropic", "claude-opus-5-5", 1_000_000, 0.5, 0.44), spent("xai", "grok-4.7", 10_000, 0.02, 0)]
+  const rates = buildRates({ config, models, recent, all: recent, refs, providerIDs: ["claude-agent", "xai", "anthropic", "ollama"] })
+  assert.equal(rates.models["claude-agent/opus"]?.basis, "api")
+  assert.equal(rates.models["claude-agent/opus"]?.estimate, false)
+  assert.equal(rates.models["claude-agent/opus"]?.perMillion, 0.4)
+  assert.match(rates.models["claude-agent/opus"]!.note, /not billed per token/)
+  assert.match(rates.models["claude-agent/opus"]!.note, /Anthropic API/)
+  // What was charged, not the list-price value of the same tokens.
+  assert.equal(rates.models["anthropic/claude-opus-5-5"]?.basis, "actual")
+  assert.equal(rates.models["anthropic/claude-opus-5-5"]?.perMillion, 0.44)
+  // Too little recorded use: the shared mix, marked as an estimate, still comparable with the others.
+  assert.equal(rates.models["xai/grok-4.7"]?.estimate, true)
+  assert.equal(rates.models["xai/grok-4.7"]?.basis, "api")
+  assert.equal(rates.models["ollama/qwen"]?.basis, "free")
+  assert.equal(rates.providers.ollama?.perMillion, 0)
+  assert.equal(rates.providers["claude-agent"]?.perMillion, 0.4)
+  // Nothing recorded at all still produces a figure, from the typical mix, so a new route can be compared.
+  const fresh = buildRates({ config, models, recent: [], all: [], refs, providerIDs: ["claude-agent"] })
+  assert.equal(fresh.models["claude-agent/opus"]?.estimate, true)
+  assert.equal(fresh.models["claude-agent/opus"]?.perMillion, perMillionAt([opus], TYPICAL_MIX))
+  assert.match(fresh.models["claude-agent/opus"]!.note, /Nothing recorded yet/)
+  // A handful of requests reporting a cost must not make the rest look free.
+  const partial = buildRates({ config, models, recent: [spent("anthropic", "claude-opus-5-5", 1_000_000, 1, 0.1)], all: [], refs: [{ providerID: "anthropic", id: "claude-opus-5-5" }], providerIDs: ["anthropic"] })
+  assert.equal(partial.models["anthropic/claude-opus-5-5"]?.basis, "api")
+  assert.equal(partial.models["anthropic/claude-opus-5-5"]?.perMillion, 1)
+  const html = fs.readFileSync(new URL("../src/dashboard/page.html", import.meta.url), "utf8")
+  assert.match(html, /function rateLabel/)
+  assert.match(html, /per million tokens/)
 })

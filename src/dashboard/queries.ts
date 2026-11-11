@@ -321,6 +321,46 @@ export function routingEvents(store: Store, q: { day: string; trigger: string; f
   return { rows: page, next: more ? page.at(-1)?.id : undefined }
 }
 
+export type ModelSpend = {
+  provider: string
+  model: string
+  input: number
+  output: number
+  reasoning: number
+  cacheRead: number
+  cacheWrite: number
+  tokens: number
+  equiv: number
+  actual: number
+}
+
+/** Tokens and cost by provider and model, from the same rollup the rest of the dashboard reads. */
+export function usageByModel(store: Store, r: Range): ModelSpend[] {
+  const u = usage(r)
+  return store
+    .all<{ provider: string; model: string; input: number; output: number; reasoning: number; cache_read: number; cache_write: number; tokens: number; equiv: number; actual: number }>(
+      `${u.cte} SELECT provider, model,
+         COALESCE(SUM(input), 0) AS input, COALESCE(SUM(output), 0) AS output, COALESCE(SUM(reasoning), 0) AS reasoning,
+         COALESCE(SUM(cache_read), 0) AS cache_read, COALESCE(SUM(cache_write), 0) AS cache_write,
+         COALESCE(SUM(input + output + reasoning + cache_read + cache_write), 0) AS tokens,
+         COALESCE(SUM(equiv), 0) AS equiv, COALESCE(SUM(actual), 0) AS actual
+       FROM u GROUP BY provider, model`,
+      ...u.params,
+    )
+    .map((row) => ({
+      provider: row.provider,
+      model: row.model,
+      input: row.input,
+      output: row.output,
+      reasoning: row.reasoning,
+      cacheRead: row.cache_read,
+      cacheWrite: row.cache_write,
+      tokens: row.tokens,
+      equiv: row.equiv,
+      actual: row.actual,
+    }))
+}
+
 /** Copilot AI credits by model since a time, estimated from recorded tokens at each model's list price. */
 export function copilotCredits(store: Store, fromMs: number, limit = 4) {
   return store

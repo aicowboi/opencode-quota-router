@@ -83,6 +83,9 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.005em }
 .rung.off { opacity: .5 }
 .rank { color: var(--muted); font-size: 13px; padding-top: 1px }
 .pname { font-weight: 600 } .pkind { color: var(--muted); font-size: 12px }
+.rate { color: var(--soft); font-size: 12.5px }
+.rate.block { display: block; margin-top: 3px }
+.rate .basis { color: var(--muted); font-size: 11px }
 .gauge { display: grid; grid-template-columns: 76px 1fr auto; gap: 4px 10px; align-items: center; font-size: 12.5px }
 .gauge + .gauge { margin-top: 7px }
 .gauge .lab { color: var(--muted) }
@@ -269,7 +272,7 @@ footer { padding: 36px 0 48px; color: var(--muted); font-size: 12px; line-height
   <section aria-labelledby="h-route">
     <div class="sec-head"><h2 id="h-route">Routing setup</h2><span class="caption">Choose a recommended preset or review your model routes. Limits, context fit and spending caps still apply.</span></div>
     <div id="intelligent"></div>
-    <div class="sec-head"><h3 class="route-title">Connected providers</h3><span class="caption">These ranks order manual routes; an accepted intelligent preset has its own order.</span></div>
+    <div class="sec-head"><h3 class="route-title">Connected providers</h3><span class="caption">These ranks order manual routes; an accepted intelligent preset has its own order. The price under each name is per million tokens.</span></div>
     <div class="ladder" id="ladder"></div>
     <div id="suggest"></div>
   </section>
@@ -350,6 +353,7 @@ const fmtN = (x) => { x = n(x); const a = Math.abs(x); if (a < 1e3) return nf("i
   const d = a >= 1e9 ? 2 : a >= 1e4 && a < 1e6 ? 0 : 1; return nf("c" + d, { notation: "compact", maximumFractionDigits: d }).format(x) }
 const fmtInt = (x) => Math.round(n(x)).toLocaleString()
 const fmtUSD = (x) => { x = n(x); const d = x >= 100 ? 0 : x >= 1 ? 2 : x > 0 ? 3 : 0; return nf("usd" + d, { style: "currency", currency: "USD", minimumFractionDigits: d, maximumFractionDigits: d }).format(x) }
+const fmtRate = (x) => { x = n(x); const d = x >= 0.1 ? 2 : 3; return nf("rate" + d, { style: "currency", currency: "USD", minimumFractionDigits: d, maximumFractionDigits: d }).format(x) }
 const fmtDur = (ms) => { ms = Math.max(0, n(ms)); const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), r = s % 60
   return d ? d + "d " + h + "h" : h ? h + "h " + String(m).padStart(2, "0") + "m" : m ? m + "m " + String(r).padStart(2, "0") + "s" : r + "s" }
 const fmtTime = (t) => t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""
@@ -392,6 +396,13 @@ const pname = (p) => p === "openai" && chatgpt() ? "ChatGPT subscription" : (PRO
 const pshort = (p) => p === "openai" && chatgpt() ? "ChatGPT" : (PROVIDERS[p] || {}).short || p
 const PKIND = { subscription: "Subscription", metered: "Pay-per-use", local: "Local · free" }
 const providerOf = (model) => String(model || "").split("/")[0]
+const rateOf = (ref) => (state && state.rates && state.rates.models || {})[String(ref || "").replace(/#.*$/, "")]
+function rateLabel(rate, block) {
+  if (!rate) return ""
+  const money = rate.basis === "free" || !(rate.perMillion > 0) ? "Free" : fmtRate(rate.perMillion) + (rate.high > rate.perMillion * 1.05 ? "–" + fmtRate(rate.high) : "") + " / 1M"
+  const basis = rate.basis === "actual" ? "actual" : rate.basis === "api" ? "API" + (rate.estimate ? " est." : "") : ""
+  return '<span class="rate' + (block ? " block" : "") + '" title="' + esc(rate.note) + '">' + esc(money) + (basis ? ' <span class="basis">' + basis + "</span>" : "") + '<span class="sr-only">. ' + esc(rate.note) + "</span></span>"
+}
 
 async function api(path) { const r = await fetch(path, { cache: "no-store" }); if (!r.ok) throw new Error(path + " " + r.status); return r.json() }
 // Screen readers hear what an action did; a failure is also shown, since nothing else on the page would change.
@@ -605,7 +616,7 @@ function renderLadder() {
     const t = provTotals[p.id]
     const use = t ? fmtN(t.tokens) + ' tokens<div class="muted">' + fmtUSD(p.kind === "metered" ? t.actual : t.equiv) + (p.kind === "metered" ? " spent" : " at API prices") + "</div>" : '<span class="muted">No use ' + esc(RANGE_TEXT[range]) + "</span>"
     return '<div class="rung' + (serving[p.id] ? " serving" : "") + (p.connected ? "" : " off") + '" style="--c:' + col + '"><span class="rank">' + (i + 1) + "</span>" +
-      '<div><div class="pname"><span class="dot" style="background:' + col + '"></span>' + esc(pname(p.id)) + '</div><div class="pkind">' + esc(PKIND[p.kind] || p.kind) + (p.id === "claude-agent" && s.plans && s.plans.claude ? " · " + esc(s.plans.claude.replace(/^Claude /, "")) : "") + (p.discovered ? '<span class="tag" title="Connected in OpenCode and ranked by kind; set providers.' + esc(p.id) + '.priority to place it yourself">found</span>' : "") + "</div></div>" +
+      '<div><div class="pname"><span class="dot" style="background:' + col + '"></span>' + esc(pname(p.id)) + '</div><div class="pkind">' + esc(PKIND[p.kind] || p.kind) + (p.id === "claude-agent" && s.plans && s.plans.claude ? " · " + esc(s.plans.claude.replace(/^Claude /, "")) : "") + (p.discovered ? '<span class="tag" title="Connected in OpenCode and ranked by kind; set providers.' + esc(p.id) + '.priority to place it yourself">found</span>' : "") + "</div>" + rateLabel((s.rates && s.rates.providers || {})[p.id], true) + "</div>" +
       "<div>" + cap + '</div><div class="state">' + st + '</div><div class="usage">' + use + "</div></div>"
   }).join("")
   for (const b of $("ladder").querySelectorAll("[data-reset]")) b.onclick = () => act({ action: "reset-pool", pool: b.dataset.reset })
@@ -617,13 +628,13 @@ function renderLadder() {
 // ---------- model routes and reviewable suggestions ----------
 const routeName = (name) => ({ opus: "Opus route", sonnet: "Sonnet route", fable: "Fable route", haiku: "Haiku route", "quota-router/intelligent": "Intelligent route" })[name] || name
 function routeSequence(entries, label, highlight) {
-  return '<ol class="route-sequence" aria-label="' + esc(label) + '">' + entries.map((e, i) => '<li class="' + (e.ref === highlight ? "new " : "") + (e.connected === false ? "unavailable" : "") + '"><span>' + (i + 1) + " · " + esc(pshort(e.providerID)) + (e.ref === highlight ? ' <span class="st-ok">New</span>' : "") + '</span><span class="model">' + esc(e.ref) + '</span><span class="muted">' + esc(e.connected === false ? "Not connected · skipped" : PKIND[e.kind] || e.kind) + "</span></li>").join("") + "</ol>"
+  return '<ol class="route-sequence" aria-label="' + esc(label) + '">' + entries.map((e, i) => '<li class="' + (e.ref === highlight ? "new " : "") + (e.connected === false ? "unavailable" : "") + '"><span>' + (i + 1) + " · " + esc(pshort(e.providerID)) + (e.ref === highlight ? ' <span class="st-ok">New</span>' : "") + '</span><span class="model">' + esc(e.ref) + '</span><span class="muted">' + esc(e.connected === false ? "Not connected · skipped" : PKIND[e.kind] || e.kind) + "</span>" + rateLabel(rateOf(e.ref), true) + "</li>").join("") + "</ol>"
 }
 function renderSuggest() {
   const s = state, routes = s.routes || []
   const data = (x) => ' data-chain="' + esc(x.chain) + '" data-ref="' + esc(x.ref) + '"' + (x.to ? ' data-to="' + esc(x.to) + '"' : "")
   const paid = (kind) => kind === "metered" ? '<div class="note st-warn">Pay-per-use: this alternative can incur API charges when routing reaches it. Your spending caps still apply.</div>' : ""
-  $("suggest").innerHTML = '<div class="route-guidance"><div class="setup-head"><h3 class="route-title">Model routes & suggestions</h3><span class="spacer"></span>' + (s.dismissedSuggestions ? '<button class="linkish" data-review>Review dismissed suggestions (' + s.dismissedSuggestions + ")</button>" : "") + '</div><p class="note">A route (called a “chain” in settings) groups models for similar work. Pick a model in a route and requests try its first available entry, from left to right. Limited, disconnected or unsuitable entries are skipped; routing returns when capacity resets. Models outside these routes are left alone.</p><p class="note">Suggestions do nothing until you accept them. Price-based matches are rough comparisons, not proof of equal quality. Open a route to see exactly what would change.</p><div class="list">' + routes.map((r) => {
+  $("suggest").innerHTML = '<div class="route-guidance"><div class="setup-head"><h3 class="route-title">Model routes & suggestions</h3><span class="spacer"></span>' + (s.dismissedSuggestions ? '<button class="linkish" data-review>Review dismissed suggestions (' + s.dismissedSuggestions + ")</button>" : "") + '</div><p class="note">A route (called a “chain” in settings) groups models for similar work. Pick a model in a route and requests try its first available entry, from left to right. Limited, disconnected or unsuitable entries are skipped; routing returns when capacity resets. Models outside these routes are left alone.</p><p class="note">The price on each provider is what a million tokens costs there, so they can be compared. Pay-per-use shows what was charged; everything else shows the API price of the same mix of input, output and cache. A subscription is not billed that amount.</p><p class="note">Suggestions do nothing until you accept them. Price-based matches are rough comparisons, not proof of equal quality. Open a route to see exactly what would change.</p><div class="list">' + routes.map((r) => {
     const isOpen = open.has("route:" + r.chain), count = r.suggestions.length + r.updates.length
     const additions = (s.added || {})[r.chain] || [], replacements = Object.entries((s.replaced || {})[r.chain] || {})
     const changes = r.suggestions.map((x) => '<div class="route-change"><h4>Add ' + esc(pname(x.providerID)) + ' as an alternative</h4><div class="why">' + esc(x.reason) + '</div>' + paid(x.kind) + '<div class="note">After adding — its position follows provider rank, so it may come before an existing entry:</div>' + routeSequence(x.after, "Route after adding " + x.ref, x.ref) + '<div class="route-actions"><button class="btn-sm"' + data(x) + ' data-do="chain-add" aria-label="Add ' + esc(x.ref) + " to " + esc(routeName(r.chain)) + '">Add to route</button><button class="linkish"' + data(x) + ' data-do="chain-ignore">Dismiss suggestion</button></div></div>').join("") +
@@ -676,7 +687,7 @@ function renderIntelligent() {
     (!d.available ? '<p class="error">This OpenCode version does not support stateless AI analysis. Manual routes still work.</p>' : "") + (selected && selected.blocked ? '<p class="error">' + esc(selected.blocked) + '</p>' : "") +
     (intelligentError || d.error ? '<p class="error" role="alert">' + esc(intelligentError || d.error) + '</p>' : "") +
     '<div class="route-actions"><button class="btn-primary" id="analyzeRouting"' + (busy || !d.available || !selected || selected.blocked || (selected.kind === "metered" && !paidAnalysis) ? " disabled" : "") + '>' + (busy ? "Analyzing your setup…" : fresh ? "Set up intelligent routing" : plan ? "Analyze again" : "Suggest a routing improvement") + '</button>' + (!d.active && !d.onboarded ? '<button class="linkish" id="keepManual"' + (busy ? " disabled" : "") + '>Keep manual routing</button>' : "") + '</div>' +
-    (plan ? '<div class="recommended"><div class="setup-head"><h3>' + (applied ? "Your active intelligent route" : "Recommended route · review before applying") + '</h3><span class="caption">Analyzed ' + esc(fmtWhen(plan.at)) + " · " + esc(plan.goal) + '</span></div><p>' + esc(plan.summary) + '</p>' + (d.stale ? '<p class="st-warn">Your providers, models or default changed. Analyze again before applying this proposal; your active route is unchanged.</p>' : "") + '<ol>' + entries.map((e, i) => '<li><span class="muted">' + (i + 1) + '</span><div><div>' + (i === 0 ? "Start with " : "Then try ") + '<span class="model">' + esc(e.ref) + '</span>' + (e.kind === "metered" ? '<span class="tag">Pay-per-use</span>' : "") + '</div><div class="why">' + esc(e.reason) + '</div></div></li>').join("") + '</ol><p class="privacy">An AI recommendation, not a quality guarantee. Your manual chains, provider priorities, agent/project rules and spending limits are retained. Pinned sessions stay on their current model.</p><div class="route-actions">' + (!applied ? '<button class="btn-primary" id="applyRouting"' + (busy || d.stale ? " disabled" : "") + '>Use this intelligent route</button>' : '<span class="st-ok">Intelligent routing is on</span>') + (d.active ? '<button class="linkish" id="manualRouting"' + (busy ? " disabled" : "") + '>Switch back to manual routes</button>' : "") + '</div></div>' : "") + '</div></div>'
+    (plan ? '<div class="recommended"><div class="setup-head"><h3>' + (applied ? "Your active intelligent route" : "Recommended route · review before applying") + '</h3><span class="caption">Analyzed ' + esc(fmtWhen(plan.at)) + " · " + esc(plan.goal) + '</span></div><p>' + esc(plan.summary) + '</p>' + (d.stale ? '<p class="st-warn">Your providers, models or default changed. Analyze again before applying this proposal; your active route is unchanged.</p>' : "") + '<ol>' + entries.map((e, i) => '<li><span class="muted">' + (i + 1) + '</span><div><div>' + (i === 0 ? "Start with " : "Then try ") + '<span class="model">' + esc(e.ref) + '</span>' + (e.kind === "metered" ? '<span class="tag">Pay-per-use</span>' : "") + " " + rateLabel(rateOf(e.ref)) + '</div><div class="why">' + esc(e.reason) + '</div></div></li>').join("") + '</ol><p class="privacy">An AI recommendation, not a quality guarantee. Your manual chains, provider priorities, agent/project rules and spending limits are retained. Pinned sessions stay on their current model.</p><div class="route-actions">' + (!applied ? '<button class="btn-primary" id="applyRouting"' + (busy || d.stale ? " disabled" : "") + '>Use this intelligent route</button>' : '<span class="st-ok">Intelligent routing is on</span>') + (d.active ? '<button class="linkish" id="manualRouting"' + (busy ? " disabled" : "") + '>Switch back to manual routes</button>' : "") + '</div></div>' : "") + '</div></div>'
   $("intelligentToggle").onclick = () => setIntelligentCollapsed(!intelligentCollapsed)
   $("intelligentHide").onclick = () => setIntelligentHidden(true)
   if (d.defaultKnown === false) {
