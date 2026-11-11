@@ -53,7 +53,7 @@ async function decideRetry(core: Core, e: RetryEvent) {
   core.pools.report(signal)
   if (!s.preferred && !s.pinned) await core.initSession(s)
   s.current ??= e.model
-  if (!s.preferred || s.pinned) {
+  if (!s.preferred || core.pinnedBy(s)) {
     // Not ours to route. Still stop OpenCode waiting up to 15 minutes per attempt on a window that will not reset soon.
     if (e.decision.retry && (signal.kind === "window" || signal.kind === "billing")) e.decision = { retry: false }
     return
@@ -90,7 +90,12 @@ export async function onPrompt(core: Core, e: { sessionID: string; metadata?: Re
   if (!core.config.enabled || core.paused || e.metadata?.quotaRouter) return
   const s = core.session(e.sessionID)
   if (!s.preferred && !s.current) await core.initSession(s)
-  if (!s.preferred || s.pinned) return
+  const pin = core.pinnedBy(s)
+  if (pin) {
+    if (pin !== s) await followPin(core, s, pin)
+    return
+  }
+  if (!s.preferred) return
   await core.refreshModels()
   const providers = [...new Set(orderedChain(core.config, s.preferred.chain).map((r) => r.providerID))]
   await core.freshUsage(providers)
@@ -124,6 +129,26 @@ export async function onPrompt(core: Core, e: { sessionID: string; metadata?: Re
   await core.switchTo(s, r.target, trigger, undefined, evidence).catch((error) => core.log.error("switch failed", { sessionID: s.id, error: String(error) }))
 }
 
+/**
+ * A subagent of a pinned session runs on the provider the session is pinned to, rather than at the top of its chain.
+ * One started elsewhere moves there once: to its own chain's entry for that provider (keeping a lighter model the
+ * agent asked for), or else to the pinned model itself. A model picked in the subagent's session, or one in no chain,
+ * is left alone, as routing would leave it.
+ */
+async function followPin(core: Core, s: SessionState, pin: SessionState) {
+  if (s.picked || !s.preferred) return
+  const [at, model] = await Promise.all([core.modelOf(pin), core.modelOf(s)])
+  if (!at || !model || at.providerID === model.providerID) return
+  const target = orderedChain(core.config, s.preferred.chain).find((c) => c.providerID === at.providerID) ?? at
+  if (core.config.dryRun) {
+    const key = `pin ${refLabel(target)}`
+    if (s.dryLast === key) return
+    s.dryLast = key
+  }
+  const evidence = `${pin.id === s.parentID ? "Its parent session" : "The session that started it"} is pinned to ${at.providerID}`
+  await core.switchTo(s, target, "route", undefined, evidence).catch((error) => core.log.error("switch failed", { sessionID: s.id, error: String(error) }))
+}
+
 /** Event stream: track models, successes, manual switches, and recover failed executions. */
 export async function onEvent(core: Core, ev: { id: string; type: string; created: number; data: Record<string, any> }) {
   const d = ev.data ?? {}
@@ -132,6 +157,7 @@ export async function onEvent(core: Core, ev: { id: string; type: string; create
     case "session.created": {
       const s = core.session(sid!)
       s.parentID = d.parentID
+      s.rootKnown = !d.parentID
       if (d.model?.providerID && !s.current) {
         s.current = d.model
         s.preferred ??= core.preferredFor(d.model)
@@ -139,8 +165,9 @@ export async function onEvent(core: Core, ev: { id: string; type: string; create
       if (typeof d.location?.directory === "string") s.directory = d.location.directory
       core.setAgent(s, d.agent)
       core.prefer(s)
-      // An agent or a project with its own chain starts on that chain, not on the model the session was created with.
-      if (s.byAgent) void onPrompt(core, { sessionID: s.id })
+      // An agent or a project with its own chain starts on that chain, not on the model the session was created with,
+      // and a subagent of a pinned session starts on the provider it is pinned to.
+      if (s.byAgent || (s.parentID && core.pinnedBy(s))) void onPrompt(core, { sessionID: s.id })
       return
     }
     case "session.agent.selected": {
@@ -210,7 +237,7 @@ async function resumeAfterFailure(core: Core, ev: { id: string; data: Record<str
   const sid: string = ev.data.sessionID
   const error = ev.data.error as SessionError | undefined
   const s = core.session(sid)
-  if (!error || !s.preferred || s.pinned || core.paused || !core.config.enabled || s.resumed.has(ev.id)) return
+  if (!error || !s.preferred || core.pinnedBy(s) || core.paused || !core.config.enabled || s.resumed.has(ev.id)) return
   const model = s.stepModel ?? s.current
   if (!model) return
   const signal = classify(model.providerID, model.id, error, Date.now())

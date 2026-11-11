@@ -119,7 +119,7 @@ export function runDoctor(core: Core, now = Date.now()): Check[] {
       if (rules) add({ id: `rules-${seenDirs.size}`, status: "info", title: `Project rules apply in ${path.basename(dir)}`, detail: [rules.deny.length ? `Never routed to: ${rules.deny.join(", ")}` : "", rules.denyKinds.length ? `No ${rules.denyKinds.join(" or ")} providers` : "", rules.allow ? `Only: ${rules.allow.join(", ") || "nothing"}` : "", rules.chain ? `Chain: ${rules.chain}` : "", `From ${rules.source}`].filter(Boolean).join(" · ") })
     }
     const out = rules && s.current ? ruledOut(config, rules, s.current.providerID) : undefined
-    if (out && core.recorder.live.has(s.id)) add({ id: `rules-session-${s.id}`, status: "warn", title: "A session is on a provider its project shuts out", detail: `${out}.`, fix: s.pinned ? "The session is pinned; /router unpin lets routing move it." : "Pick a model that is in a chain, so routing can move it." })
+    if (out && core.recorder.live.has(s.id)) add({ id: `rules-session-${s.id}`, status: "warn", title: "A session is on a provider its project shuts out", detail: `${out}.`, fix: s.pinned ? "The session is pinned; /router unpin lets routing move it." : core.pinnedBy(s) ? "The session that started it is pinned; /router unpin there lets routing move it." : "Pick a model that is in a chain, so routing can move it." })
   }
   for (const [id, h] of Object.entries(core.health(now)))
     if (config.health.enabled && unreliable(config, h)) add({ id: `health-${id}`, status: "warn", title: `${id} is unreliable right now`, detail: `${h.failed} of its last ${h.requests} requests failed without a limit being the cause. Routing passes it over while another entry can run, and comes back as the failures age out.` })

@@ -957,6 +957,64 @@ test("pace guard: a subagent leaves a plan that is on pace to run out, and the m
   for (const p of core.pools.all()) core.pools.reset(p.id, "test")
 })
 
+test("pin: a pinned session's subagents stay on its provider instead of routing up the chain", async () => {
+  const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }
+  const grok = { providerID: "xai", id: "grok-4.7", variant: "high" }
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+  // The main session was moved to xAI by hand and pinned there, though Claude is free.
+  const main = "ses_pin_main"
+  harness.sessionModels.set(main, grok)
+  await onEvent(core, evt("session.created", { sessionID: main, model: grok }))
+  core.session(main).pinned = true
+  const count = harness.calls.switches.length
+  await onPrompt(core, { sessionID: main })
+  await flush()
+  assert.equal(harness.calls.switches.length, count)
+
+  // A subagent started on the parent's model stays there, turn after turn.
+  harness.sessionModels.set("ses_pin_sub", grok)
+  await onEvent(core, evt("session.created", { sessionID: "ses_pin_sub", model: grok, parentID: main }))
+  await onPrompt(core, { sessionID: "ses_pin_sub" })
+  await flush()
+  assert.equal(harness.calls.switches.length, count)
+
+  // One started on the top of the chain moves to the pinned provider, and its subagent follows the same pin.
+  harness.sessionModels.set("ses_pin_sub2", opus)
+  await onEvent(core, evt("session.created", { sessionID: "ses_pin_sub2", model: opus, parentID: main }))
+  await flush()
+  assert.deepEqual(harness.calls.switches.at(-1), { sessionID: "ses_pin_sub2", model: grok })
+  const row: any = core.store.get("SELECT trigger, evidence FROM routing WHERE session_id = 'ses_pin_sub2' ORDER BY rowid DESC LIMIT 1")
+  assert.deepEqual({ ...row }, { trigger: "route", evidence: "Its parent session is pinned to xai" })
+  harness.sessionModels.set("ses_pin_sub3", opus)
+  await onEvent(core, evt("session.created", { sessionID: "ses_pin_sub3", model: opus, parentID: "ses_pin_sub2" }))
+  await flush()
+  assert.deepEqual(harness.calls.switches.at(-1), { sessionID: "ses_pin_sub3", model: grok })
+  assert.equal(core.pinnedBy(core.session("ses_pin_sub3")).id, main)
+
+  // A limit on the pinned provider is not routed around for the subagent either.
+  const e: any = { sessionID: "ses_pin_sub", model: grok, error: { type: "provider.rate-limit", status: 429, message: "weekly limit reached" }, attempt: 2, decision: { retry: true, delay: 900_000 } }
+  const moves = harness.calls.switches.length
+  await onRetry(core, e)
+  await flush()
+  assert.equal(harness.calls.switches.length, moves)
+  for (const p of core.pools.all()) core.pools.reset(p.id, "test")
+
+  // After a restart the parent link comes from the recorded sessions, and the pin from the saved preferences.
+  core.savePrefs(core.session(main))
+  core.store.run("INSERT OR REPLACE INTO sessions (id, parent_id) VALUES ('ses_pin_sub', ?)", main)
+  for (const id of [main, "ses_pin_sub"]) core.sessions.delete(id)
+  assert.equal(core.pinnedBy(core.session("ses_pin_sub"))?.id, main)
+
+  // Unpinned, the subagent is routed again: back to the top of the chain.
+  core.session(main).pinned = false
+  await onPrompt(core, { sessionID: "ses_pin_sub" })
+  await flush()
+  assert.deepEqual(harness.calls.switches.at(-1), { sessionID: "ses_pin_sub", model: opus })
+
+  core.savePrefs(core.session(main))
+  for (const id of [main, "ses_pin_sub", "ses_pin_sub2", "ses_pin_sub3"]) core.sessions.delete(id)
+})
+
 test("switching cost: a large context waits longer in place, and a move says what it sends again", async () => {
   const sid = "ses_cache"
   const opus = { providerID: "claude-agent", id: "opus", variant: "medium" }

@@ -53,6 +53,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Changed
 
+- A pinned session's subagents stay on its provider instead of being routed to the top of the chain, and are not moved by failover or the pace guard. A subagent that starts on another provider moves to its chain's entry for the pinned one. `/router unpin` routes them again.
 - Routing counts the cost of a move (`switching`): a session that was just moved stays for three minutes before returning up the chain, a session with a large context waits up to a minute on a throttle before moving, and the routing log says how much context each move sends again.
 - Installing from npm is now the recommended way: `"package": "opencode-quota-router"` in `opencode.jsonc`. The menu bar part and the command line ship built in `dist/`.
 - Node.js is only needed for the command line and to build from source.

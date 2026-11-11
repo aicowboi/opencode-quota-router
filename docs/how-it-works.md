@@ -61,7 +61,7 @@ flowchart LR
 
 **Fail over inside the retry hook, not by resending.** Many fallback plugins abort the turn and resend the last message. quota-router instead switches the model in OpenCode's retry hook and asks for an immediate retry, so the same request runs again with its tool calls intact.
 
-**Prefer priority over the model you picked.** Your choice of model sets the chain and the effort level, and routing always uses the best provider with capacity. A session drifts back to your top subscription once it resets. `/router pin` opts a session out.
+**Prefer priority over the model you picked.** Your choice of model sets the chain and the effort level, and routing always uses the best provider with capacity. A session drifts back to your top subscription once it resets. `/router pin` opts a session out, and the subagents it starts with it: a pin is a deliberate choice of provider, so routing their work to the top of the chain would undo it.
 
 **Never route deterministic errors.** Content filters, invalid requests and context overflows would fail the same way anywhere, so switching models would only hide them.
 

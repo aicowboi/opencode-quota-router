@@ -125,8 +125,9 @@ function statusText(core: Core, sessionID: string): string {
   const s = core.sessions.get(sessionID)
   const lines = [`quota-router ${VERSION}${core.paused ? " (paused)" : ""}${core.config.dryRun ? " (dry run)" : ""}`]
   if (core.dashboardURL) lines.push(`Dashboard: ${core.dashboardURL}`)
+  const pin = s && core.pinnedBy(s)
   if (s?.preferred) {
-    lines.push(`This session: ${s.current ? refLabel(s.current) : "?"} (preferred ${refLabel(s.preferred.model)}, chain ${s.preferred.chain}${s.byAgent ? (s.byProject ? " from this project's settings" : ` from the ${s.agent} agent`) : ""}${s.pinned ? ", pinned" : ""})`)
+    lines.push(`This session: ${s.current ? refLabel(s.current) : "?"} (preferred ${refLabel(s.preferred.model)}, chain ${s.preferred.chain}${s.byAgent ? (s.byProject ? " from this project's settings" : ` from the ${s.agent} agent`) : ""}${s.pinned ? ", pinned" : pin ? ", stays with the pinned session that started it" : ""})`)
     lines.push(`Chain: ${orderedChain(core.config, s.preferred.chain).map(refLabel).join(" → ")}`)
   } else lines.push("This session's model is in no chain, so it is not routed.")
   for (const sc of core.schedules()) lines.push(`Schedule ${sc.name} applies${sc.until ? ` until ${new Date(sc.until).toLocaleString()}` : ""}: ${describeSchedule(sc)}`)
@@ -135,7 +136,7 @@ function statusText(core: Core, sessionID: string): string {
     const parts = [rules.deny.length ? `no ${rules.deny.join(", ")}` : "", rules.denyKinds.length ? `no ${rules.denyKinds.join(" or ")} providers` : "", rules.allow ? `only ${rules.allow.join(", ") || "nothing"}` : "", rules.chain ? `chain ${rules.chain}` : ""].filter(Boolean)
     if (parts.length) lines.push(`Project rules: ${parts.join("; ")} (from ${rules.source})`)
     const out = s?.current ? ruledOut(core.config, rules, s.current.providerID) : undefined
-    if (out) lines.push(`This session is on a provider the rules shut out: ${out}.${s?.pinned ? " It is pinned; /router unpin lets routing move it." : ""}`)
+    if (out) lines.push(`This session is on a provider the rules shut out: ${out}.${s?.pinned ? " It is pinned; /router unpin lets routing move it." : pin ? " The session that started it is pinned; /router unpin there lets routing move it." : ""}`)
   }
   for (const [id, until] of Object.entries(core.saved())) lines.push(`- ${id}: saved for later until ${new Date(until).toLocaleString()}`)
   for (const p of core.pools.all()) {
@@ -191,12 +192,12 @@ export default {
             case "pin":
               s.pinned = true
               core.savePrefs(s)
-              text = "Routing is off for this session; it stays on its current model."
+              text = "Routing is off for this session; it stays on its current model, and the subagents it starts stay on its provider."
               break
             case "unpin":
               s.pinned = false
               core.savePrefs(s)
-              text = "Routing is back on for this session."
+              text = core.pinnedBy(s) ? "This session stays with the pinned session that started it; /router unpin there routes both again." : "Routing is back on for this session and its subagents."
               break
             case "reset":
               for (const p of core.pools.all()) if (!arg || arg === "all" || p.id === arg || p.id.startsWith(`${arg}:`)) core.pools.reset(p.id, "command")

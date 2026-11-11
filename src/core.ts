@@ -46,6 +46,8 @@ export type SessionState = {
   resumes: number[]
   deferred?: { at: number; executionEventID: string }
   parentID?: string
+  /** The recorded sessions say this session has no parent, so `parentID` need not be looked up again. */
+  rootKnown?: boolean
   /** When routing last moved the session. */
   movedAt?: number
   /** Where the session works, for project rules. */
@@ -785,6 +787,46 @@ export class Core {
       "INSERT INTO session_prefs (id, data, updated) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated = excluded.updated",
       s.id, JSON.stringify({ pinned: s.pinned, preferred: s.byAgent ? undefined : s.preferred?.model, picked: s.picked === true }), Date.now(),
     )
+  }
+
+  /** The session a subagent's session was started from, from the event that created it or the recorded sessions. */
+  parentOf(s: SessionState): string | undefined {
+    if (s.parentID === undefined && !s.rootKnown) {
+      const row = this.store.get<{ parent_id: string | null }>("SELECT parent_id FROM sessions WHERE id = ?", s.id)
+      s.parentID = row?.parent_id ?? undefined
+      // Only a recorded session is known to have no parent; one not recorded yet is asked about again.
+      s.rootKnown = Boolean(row) && s.parentID === undefined
+    }
+    return s.parentID
+  }
+
+  /**
+   * The pinned session this one stays with: itself when pinned, or for a subagent the nearest pinned session it was
+   * started from. A pin keeps the subagents a session starts on its provider, instead of routing them up the chain.
+   */
+  pinnedBy(s: SessionState): SessionState | undefined {
+    const seen = new Set<string>()
+    for (let at: SessionState | undefined = s; at && !seen.has(at.id); ) {
+      if (at.pinned) return at
+      seen.add(at.id)
+      const parent = this.parentOf(at)
+      at = parent ? this.session(parent) : undefined
+    }
+    return undefined
+  }
+
+  /** The model a session is on, asking OpenCode when the plugin has not seen it yet. */
+  async modelOf(s: SessionState): Promise<ModelRef | undefined> {
+    if (s.current ?? s.stepModel) return s.current ?? s.stepModel
+    if (!this.ctx) return undefined
+    try {
+      const r = await this.ctx.session.get({ sessionID: s.id })
+      const model: ModelRef | undefined = (r?.data ?? r)?.model
+      if (model?.providerID) s.current = model
+    } catch (error) {
+      this.log.debug("session get failed", { sessionID: s.id, error: String(error) })
+    }
+    return s.current
   }
 
   /** Learn a session's model and preference when the plugin first meets it. */

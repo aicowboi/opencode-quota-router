@@ -186,7 +186,7 @@ Without these, quota-router reacts to limit errors. With them, it sees limits co
 - **Reset times** come from the provider wherever possible: Claude's limit message, Copilot's `Retry-After`, Anthropic's monthly spend cap and rate-limit headers, Gemini's retry delay and midnight-Pacific daily reset, OpenRouter's `resets_at`, and a wait given in words ("retry after 26 seconds"). Otherwise a backing-off cooldown applies, and the provider is retried at a turn boundary.
 - **A provider can be unwell without being limited.** quota-router measures how long each provider takes to start answering and how many of its requests fail. When half or more of a provider's last requests (five or more, in a quarter of an hour) failed for reasons that are not a limit, routing passes it over while another entry can run, and returns as the failures age out. With nothing else available it is still used. And where you give two providers the same `priority`, the one that starts answering clearly sooner goes first.
 - **When everything is limited,** the request waits for the earliest reset, up to 30 minutes per retry. A failed session is continued once at that reset, if nothing else happened in it.
-- **Your choice of model** sets the chain and effort level. Routing still uses the highest-priority provider with capacity; use `/router pin` to keep one session on one provider.
+- **Your choice of model** sets the chain and effort level. Routing still uses the highest-priority provider with capacity; use `/router pin` to keep one session on one provider. The subagents a pinned session starts stay on that provider too, rather than going to the top of the chain; a subagent that starts elsewhere moves to its chain's entry for that provider.
 
 **Want an agent on a cheaper chain?** `"agents": { "plan": "sonnet" }` (or `/router agent plan sonnet`) runs every session of the `plan` agent on the `sonnet` chain: the session moves to that chain's first available entry when it starts, and falls back along that chain. Picking a model yourself in a session outranks the rule for that session, until you select the agent again. This applies to the agent a session runs as. Subagents run on their parent session's model, and compaction and session titles run on the session's model; OpenCode does not let a plugin change those yet.
 
@@ -221,7 +221,7 @@ A provider the rules shut out is never routed to, even when it is the only one l
 
 Sessions move at their next turn after a schedule starts or ends, never in the middle of one. The dashboard's headline, `/router status` and `/router doctor` say which schedules apply now and until when.
 
-**Want subagents to stop draining a plan that is running low?** With a usage check on, the dashboard says when a plan window is on pace to run out before it resets, for example "5-hour session on pace to run out at 15:40 · resets 17:00". The pace is measured over the recent part of the window (the last hour of a 5-hour window, about a day and a half of a weekly one). Turn on the pace guard with `/router pace on` or `"pace": { "enabled": true }`, and subagent sessions, plus any agents you list in `pace.lightAgents`, are routed to the next provider in their chain while that forecast stands, so what is left of the plan goes to your main session. It is a preference, not a rule: if nothing else in the chain can run, the subagent still uses the plan.
+**Want subagents to stop draining a plan that is running low?** With a usage check on, the dashboard says when a plan window is on pace to run out before it resets, for example "5-hour session on pace to run out at 15:40 · resets 17:00". The pace is measured over the recent part of the window (the last hour of a 5-hour window, about a day and a half of a weekly one). Turn on the pace guard with `/router pace on` or `"pace": { "enabled": true }`, and subagent sessions, plus any agents you list in `pace.lightAgents`, are routed to the next provider in their chain while that forecast stands, so what is left of the plan goes to your main session. It is a preference, not a rule: if nothing else in the chain can run, the subagent still uses the plan. A pin outranks it: the subagents of a pinned session stay on its provider.
 
 **Is my plan the right size?** `/router advice`, or "Plan advice" on the dashboard, looks at the last 30 days on this machine: how often each subscription was limited and for how long, the busiest week the usage checks recorded, and what pay-per-use providers cost in that time. It says when a larger plan would have cost less than the fallback spend, and when the busiest week would have fitted in the plan below. It needs at least a week of recorded use, and the usage checks (step 4) for the peak figures and for the Claude plan, which is read from Claude Code's login (Pro, Max, Ultra, Team seats, Enterprise). Prices are list prices built into the plugin; they change, so check the provider's page before deciding, and correct them with `advisor.prices`. Nothing is sent anywhere.
 
@@ -259,8 +259,8 @@ Sessions move at their next turn after a schedule starts or ends, never in the m
 | Command | Effect |
 |---|---|
 | `/router` | Open the dashboard |
-| `/router pin` | Keep this session on its current model |
-| `/router unpin` | Route this session again |
+| `/router pin` | Keep this session on its current model, and the subagents it starts on its provider |
+| `/router unpin` | Route this session and its subagents again |
 | `/router reset <pool or all>` | Clear a provider's limited state |
 | `/router pause` | Pause routing for every session |
 | `/router resume` | Resume routing for every session |
